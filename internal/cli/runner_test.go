@@ -395,6 +395,8 @@ func TestRunnerJiraPullPushAndTake(t *testing.T) {
 
 	oldClient := jira.DefaultHTTPClient
 	defer func() { jira.DefaultHTTPClient = oldClient }()
+	remoteExportStatus := "To Do"
+	remoteExportUpdated := "2026-03-13T12:05:00.000+0000"
 	jira.DefaultHTTPClient = &http.Client{Transport: runnerRoundTripFunc(func(r *http.Request) (*http.Response, error) {
 		wantAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte("agent@example.com:secret"))
 		if r.Header.Get("Authorization") != wantAuth {
@@ -443,6 +445,19 @@ func TestRunnerJiraPullPushAndTake(t *testing.T) {
 				"self": "https://example.atlassian.net/rest/api/3/issue/10001",
 			})
 			return runnerJSONResponse(http.StatusCreated, string(payload)), nil
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/rest/api/3/issue/ABC-456"):
+			payload, _ := json.Marshal(map[string]any{
+				"key":  "ABC-456",
+				"self": "https://example.atlassian.net/rest/api/3/issue/10001",
+				"fields": map[string]any{
+					"summary":   "Push local item",
+					"issuetype": map[string]any{"name": "Task"},
+					"priority":  map[string]any{"name": "Medium"},
+					"status":    map[string]any{"name": remoteExportStatus},
+					"updated":   remoteExportUpdated,
+				},
+			})
+			return runnerJSONResponse(http.StatusOK, string(payload)), nil
 		default:
 			return runnerJSONResponse(http.StatusNotFound, "not found"), nil
 		}

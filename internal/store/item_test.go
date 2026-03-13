@@ -584,12 +584,25 @@ func TestImportAndExportJiraIssue(t *testing.T) {
 
 	oldClient := jira.DefaultHTTPClient
 	defer func() { jira.DefaultHTTPClient = oldClient }()
+	remoteExportStatus := "To Do"
+	remoteExportUpdated := "2026-03-13T12:05:00.000+0000"
 	jira.DefaultHTTPClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		wantAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte("agent@example.com:secret"))
 		if r.Header.Get("Authorization") != wantAuth {
 			return testJSONResponse(http.StatusUnauthorized, "unauthorized"), nil
 		}
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/api/3/issue/ABC-456/transitions":
+			payload, _ := json.Marshal(map[string]any{
+				"transitions": []any{
+					map[string]any{
+						"id":   "31",
+						"name": "Done",
+						"to":   map[string]any{"name": "Done"},
+					},
+				},
+			})
+			return testJSONResponse(http.StatusOK, string(payload)), nil
 		case r.Method == http.MethodGet && r.URL.Path == "/rest/api/3/issue/ABC-123/transitions":
 			payload, _ := json.Marshal(map[string]any{
 				"transitions": []any{
@@ -637,6 +650,19 @@ func TestImportAndExportJiraIssue(t *testing.T) {
 				"self": "https://example.atlassian.net/rest/api/3/issue/10001",
 			})
 			return testJSONResponse(http.StatusCreated, string(payload)), nil
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/rest/api/3/issue/ABC-456"):
+			payload, _ := json.Marshal(map[string]any{
+				"key":  "ABC-456",
+				"self": "https://example.atlassian.net/rest/api/3/issue/10001",
+				"fields": map[string]any{
+					"summary":   "Export me",
+					"issuetype": map[string]any{"name": "Task"},
+					"priority":  map[string]any{"name": "Medium"},
+					"status":    map[string]any{"name": remoteExportStatus},
+					"updated":   remoteExportUpdated,
+				},
+			})
+			return testJSONResponse(http.StatusOK, string(payload)), nil
 		default:
 			return testJSONResponse(http.StatusNotFound, "not found"), nil
 		}
@@ -695,6 +721,105 @@ func TestImportAndExportJiraIssue(t *testing.T) {
 	}
 	if exported.Item.Jira == nil || exported.Item.Jira.Key != "ABC-456" {
 		t.Fatalf("expected exported jira key, got %#v", exported.Item.Jira)
+	}
+	if exported.Item.Jira.LastRemoteVersion != remoteExportUpdated {
+		t.Fatalf("expected exported jira remote version to be recorded, got %#v", exported.Item.Jira)
+	}
+}
+
+func TestExportJiraIssueAlignsRemoteStatus(t *testing.T) {
+	repo := t.TempDir()
+	if _, err := InitRepo(InitOptions{RepoPath: repo}); err != nil {
+		t.Fatalf("init repo: %v", err)
+	}
+
+	oldClient := jira.DefaultHTTPClient
+	defer func() { jira.DefaultHTTPClient = oldClient }()
+
+	remoteStatus := "To Do"
+	remoteUpdated := "2026-03-13T12:00:00.000+0000"
+	transitionCalled := false
+	jira.DefaultHTTPClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		wantAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte("agent@example.com:secret"))
+		if r.Header.Get("Authorization") != wantAuth {
+			return testJSONResponse(http.StatusUnauthorized, "unauthorized"), nil
+		}
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/rest/api/3/issue":
+			payload, _ := json.Marshal(map[string]any{
+				"key":  "ABC-456",
+				"self": "https://example.atlassian.net/rest/api/3/issue/10001",
+			})
+			return testJSONResponse(http.StatusCreated, string(payload)), nil
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/api/3/issue/ABC-456/transitions":
+			payload, _ := json.Marshal(map[string]any{
+				"transitions": []any{
+					map[string]any{
+						"id":   "41",
+						"name": "Done",
+						"to":   map[string]any{"name": "Done"},
+					},
+				},
+			})
+			return testJSONResponse(http.StatusOK, string(payload)), nil
+		case r.Method == http.MethodPost && r.URL.Path == "/rest/api/3/issue/ABC-456/transitions":
+			transitionCalled = true
+			remoteStatus = "Done"
+			remoteUpdated = "2026-03-13T12:02:00.000+0000"
+			return testJSONResponse(http.StatusNoContent, ""), nil
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/rest/api/3/issue/ABC-456"):
+			payload, _ := json.Marshal(map[string]any{
+				"key":  "ABC-456",
+				"self": "https://example.atlassian.net/rest/api/3/issue/10001",
+				"fields": map[string]any{
+					"summary":   "Ship export status alignment",
+					"issuetype": map[string]any{"name": "Task"},
+					"priority":  map[string]any{"name": "Medium"},
+					"status":    map[string]any{"name": remoteStatus},
+					"updated":   remoteUpdated,
+				},
+			})
+			return testJSONResponse(http.StatusOK, string(payload)), nil
+		default:
+			return testJSONResponse(http.StatusNotFound, "not found"), nil
+		}
+	})}
+
+	writeJiraTestConfig(t, repo, "https://example.atlassian.net", "ABC")
+	t.Setenv("AJ_JIRA_EMAIL", "agent@example.com")
+	t.Setenv("AJ_JIRA_API_TOKEN", "secret")
+
+	item, err := CreateItem(CreateItemOptions{
+		RepoPath:   repo,
+		Kind:       domain.KindTask,
+		Title:      "Ship export status alignment",
+		Goal:       "ensure exported done items land in Done",
+		NextAction: "export to Jira",
+		Priority:   1,
+	})
+	if err != nil {
+		t.Fatalf("create item: %v", err)
+	}
+	if _, err := CompleteItem(CompleteItemOptions{
+		RepoPath: repo,
+		ItemID:   item.ID,
+		Summary:  "implemented",
+	}); err != nil {
+		t.Fatalf("complete item: %v", err)
+	}
+
+	exported, err := ExportJiraIssue(ExportJiraIssueOptions{
+		RepoPath: repo,
+		ItemID:   item.ID,
+	})
+	if err != nil {
+		t.Fatalf("export jira issue: %v", err)
+	}
+	if !transitionCalled {
+		t.Fatalf("expected export to align remote Jira status")
+	}
+	if exported.Item.Jira == nil || exported.Item.Jira.LastRemoteVersion != remoteUpdated {
+		t.Fatalf("expected export to refresh jira metadata, got %#v", exported.Item.Jira)
 	}
 }
 

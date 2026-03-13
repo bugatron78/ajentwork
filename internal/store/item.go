@@ -751,12 +751,18 @@ func ExportJiraIssue(opts ExportJiraIssueOptions) (ExportJiraIssueResult, error)
 
 	now := time.Now().UTC().Truncate(time.Second)
 	item.Jira = &domain.JiraLink{
-		Key:          created.Key,
-		URL:          created.URL,
-		SyncMode:     "export_only",
-		SyncState:    "clean",
-		LastSyncedAt: &now,
+		Key:       created.Key,
+		URL:       created.URL,
+		SyncMode:  "export_only",
+		SyncState: "clean",
 	}
+	remoteIssue, err := syncExportedJiraIssue(client, item, settings.StatusMap)
+	if err != nil {
+		return ExportJiraIssueResult{}, err
+	}
+	item.Jira.LastSyncedAt = &now
+	item.Jira.LastRemoteVersion = remoteIssue.Updated
+	item.Jira.URL = remoteIssue.URL
 	item.UpdatedAt = now
 	item.Summary = fmt.Sprintf("linked to Jira %s", created.Key)
 
@@ -1639,6 +1645,9 @@ func jiraLocalDirty(item domain.Item) bool {
 	if item.Jira == nil {
 		return false
 	}
+	if strings.TrimSpace(item.Jira.LastRemoteVersion) == "" {
+		return true
+	}
 	if item.Jira.SyncState == "dirty_local" {
 		return true
 	}
@@ -1691,6 +1700,37 @@ func desiredJiraStatusName(status domain.Status, statusMap map[string]domain.Sta
 		}
 	}
 	return ""
+}
+
+func syncExportedJiraIssue(client jira.Client, item domain.Item, statusMap map[string]domain.Status) (jira.Issue, error) {
+	if item.Jira == nil || strings.TrimSpace(item.Jira.Key) == "" {
+		return jira.Issue{}, errors.New("jira key is required")
+	}
+
+	remoteIssue, err := client.GetIssue(context.Background(), item.Jira.Key)
+	if err != nil {
+		return jira.Issue{}, err
+	}
+
+	if targetStatusName := desiredJiraStatusName(item.Status, statusMap); targetStatusName != "" && !jiraStatusMatches(remoteIssue.Status, targetStatusName) {
+		transitions, err := client.GetTransitions(context.Background(), item.Jira.Key)
+		if err != nil {
+			return jira.Issue{}, err
+		}
+		transition, ok := findJiraTransition(transitions, targetStatusName)
+		if !ok {
+			return jira.Issue{}, fmt.Errorf("no Jira transition available from %q to %q for %s (available: %s)", remoteIssue.Status, targetStatusName, item.Jira.Key, strings.Join(availableTransitionNames(transitions), ", "))
+		}
+		if err := client.TransitionIssue(context.Background(), item.Jira.Key, transition.ID); err != nil {
+			return jira.Issue{}, err
+		}
+		remoteIssue, err = client.GetIssue(context.Background(), item.Jira.Key)
+		if err != nil {
+			return jira.Issue{}, err
+		}
+	}
+
+	return remoteIssue, nil
 }
 
 func jiraStatusMatches(current, desired string) bool {
