@@ -99,7 +99,7 @@ func DefaultRegistry() Registry {
 			Name:    "block",
 			Summary: "mark a local work item blocked",
 			Purpose: "Move a local work item into blocked status and optionally attach a dependency that explains what must finish first.",
-			Usage:   "aj block <id> --summary <summary> [--on <id>] [--next <action>]",
+			Usage:   "aj block <id> --summary <summary> [--on <id>] [--next <action>] [--jira-comment]",
 			Arguments: []ArgDoc{
 				{Name: "id", Description: "required work item identifier such as W-8F3K2P1Q", Required: true},
 			},
@@ -107,6 +107,7 @@ func DefaultRegistry() Registry {
 				{Name: "--summary <summary>", Description: "required one-line blocker summary"},
 				{Name: "--on <id>", Description: "optional dependency item identifier to attach and wait on"},
 				{Name: "--next <action>", Description: "optional replacement next action; defaults to waiting on the dependency when --on is used"},
+				{Name: "--jira-comment", Description: "post the same summary to the linked Jira issue after blocking"},
 			},
 			Examples: []ExampleDoc{
 				{Label: "Block on another item", Command: "aj block W-8F3K2P1Q --on W-2M9A1C7L --summary \"waiting on schema decision\""},
@@ -139,12 +140,13 @@ func DefaultRegistry() Registry {
 			Name:    "done",
 			Summary: "complete a local work item",
 			Purpose: "Mark a local work item done, record its completion summary, and clear its next action.",
-			Usage:   "aj done <id> --summary <summary>",
+			Usage:   "aj done <id> --summary <summary> [--jira-comment]",
 			Arguments: []ArgDoc{
 				{Name: "id", Description: "required work item identifier such as W-8F3K2P1Q", Required: true},
 			},
 			Options: []OptionDoc{
 				{Name: "--summary <summary>", Description: "required one-line completion summary"},
+				{Name: "--jira-comment", Description: "post the same summary to the linked Jira issue after completion"},
 			},
 			Examples: []ExampleDoc{
 				{Label: "Complete an item", Command: "aj done W-8F3K2P1Q --summary \"tests added and command shipped\""},
@@ -193,7 +195,7 @@ func DefaultRegistry() Registry {
 			Name:    "handoff",
 			Summary: "transfer a local work item lease to another agent",
 			Purpose: "Assign a new lease owner with a handoff summary so another agent can continue the work without ambiguity.",
-			Usage:   "aj handoff <id> --to <agent> --summary <summary> [--next <action>] [--ttl 4h]",
+			Usage:   "aj handoff <id> --to <agent> --summary <summary> [--next <action>] [--ttl 4h] [--jira-comment]",
 			Arguments: []ArgDoc{
 				{Name: "id", Description: "required work item identifier such as W-8F3K2P1Q", Required: true},
 			},
@@ -202,6 +204,7 @@ func DefaultRegistry() Registry {
 				{Name: "--summary <summary>", Description: "required compact handoff summary"},
 				{Name: "--next <action>", Description: "optional replacement next action for the receiving agent"},
 				{Name: "--ttl <duration>", Description: "optional lease duration such as 30m or 4h; default 4h"},
+				{Name: "--jira-comment", Description: "post the same summary to the linked Jira issue after handoff"},
 			},
 			Examples: []ExampleDoc{
 				{Label: "Hand off for review", Command: "aj handoff W-8F3K2P1Q --to reviewer-1 --summary \"implementation ready for review\" --next \"verify CLI behavior\""},

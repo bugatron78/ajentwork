@@ -854,6 +854,131 @@ func TestRunnerJiraUnlinkAndReplace(t *testing.T) {
 	}
 }
 
+func TestRunnerLifecycleJiraComments(t *testing.T) {
+	repo := t.TempDir()
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	runner := NewRunner(stdout, stderr)
+
+	if code := runner.Run([]string{"--repo", repo, "init"}); code != 0 {
+		t.Fatalf("init exit code = %d, stderr = %s", code, stderr.String())
+	}
+
+	oldClient := jira.DefaultHTTPClient
+	defer func() { jira.DefaultHTTPClient = oldClient }()
+
+	commentBodies := make([]string, 0, 3)
+	jira.DefaultHTTPClient = &http.Client{Transport: runnerRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+		wantAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte("agent@example.com:secret"))
+		if r.Header.Get("Authorization") != wantAuth {
+			return runnerJSONResponse(http.StatusUnauthorized, "unauthorized"), nil
+		}
+		switch {
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/rest/api/3/issue/ABC-12"):
+			key := strings.TrimPrefix(r.URL.Path, "/rest/api/3/issue/")
+			payload, _ := json.Marshal(map[string]any{
+				"key":  key,
+				"self": "https://example.atlassian.net/rest/api/3/issue/10000",
+				"fields": map[string]any{
+					"summary":   "Linked issue",
+					"issuetype": map[string]any{"name": "Task"},
+					"priority":  map[string]any{"name": "Medium"},
+					"status":    map[string]any{"name": "To Do"},
+					"updated":   "2026-03-13T12:00:00.000+0000",
+				},
+			})
+			return runnerJSONResponse(http.StatusOK, string(payload)), nil
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/rest/api/3/issue/ABC-12") && strings.HasSuffix(r.URL.Path, "/comment"):
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode comment payload: %v", err)
+			}
+			body := payload["body"].(map[string]any)
+			content := body["content"].([]any)
+			paragraph := content[0].(map[string]any)
+			textContent := paragraph["content"].([]any)
+			text := textContent[0].(map[string]any)["text"].(string)
+			commentBodies = append(commentBodies, text)
+			return runnerJSONResponse(http.StatusCreated, `{"id":"10001"}`), nil
+		default:
+			return runnerJSONResponse(http.StatusNotFound, "not found"), nil
+		}
+	})}
+
+	writeRunnerJiraTestConfig(t, repo, "https://example.atlassian.net", "ABC")
+	t.Setenv("AJ_JIRA_EMAIL", "agent@example.com")
+	t.Setenv("AJ_JIRA_API_TOKEN", "secret")
+
+	makeLinkedItem := func(title, issueKey string) string {
+		stdout.Reset()
+		stderr.Reset()
+		if code := runner.Run([]string{"--repo", repo, "new", "--kind", "task", "--title", title, "--goal", "exercise lifecycle jira comments", "--next", "link the item"}); code != 0 {
+			t.Fatalf("new exit code = %d, stderr = %s", code, stderr.String())
+		}
+		stdout.Reset()
+		stderr.Reset()
+		if code := runner.Run([]string{"--repo", repo, "ls", "--format", "json"}); code != 0 {
+			t.Fatalf("ls json exit code = %d, stderr = %s", code, stderr.String())
+		}
+		var items []map[string]any
+		if err := json.Unmarshal(stdout.Bytes(), &items); err != nil {
+			t.Fatalf("unmarshal list json: %v", err)
+		}
+		var itemID string
+		for _, item := range items {
+			if item["title"] == title {
+				itemID = item["id"].(string)
+			}
+		}
+		if itemID == "" {
+			t.Fatalf("missing item id for %s", title)
+		}
+		stdout.Reset()
+		stderr.Reset()
+		if code := runner.Run([]string{"--repo", repo, "jira", "link", itemID, issueKey}); code != 0 {
+			t.Fatalf("jira link exit code = %d, stderr = %s", code, stderr.String())
+		}
+		return itemID
+	}
+
+	blockID := makeLinkedItem("Lifecycle block", "ABC-123")
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "block", blockID, "--summary", "waiting on reviewer", "--jira-comment"}); code != 0 {
+		t.Fatalf("block exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "posted Jira milestone comment") {
+		t.Fatalf("expected block output to mention jira comment, got %s", stdout.String())
+	}
+
+	handoffID := makeLinkedItem("Lifecycle handoff", "ABC-124")
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "handoff", handoffID, "--to", "reviewer-1", "--summary", "ready for review", "--jira-comment"}); code != 0 {
+		t.Fatalf("handoff exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "posted Jira milestone comment") {
+		t.Fatalf("expected handoff output to mention jira comment, got %s", stdout.String())
+	}
+
+	doneID := makeLinkedItem("Lifecycle done", "ABC-125")
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "done", doneID, "--summary", "work complete", "--jira-comment"}); code != 0 {
+		t.Fatalf("done exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "posted Jira milestone comment") {
+		t.Fatalf("expected done output to mention jira comment, got %s", stdout.String())
+	}
+
+	if len(commentBodies) != 3 {
+		t.Fatalf("expected 3 jira comments, got %#v", commentBodies)
+	}
+	if commentBodies[0] != "waiting on reviewer" || commentBodies[1] != "ready for review" || commentBodies[2] != "work complete" {
+		t.Fatalf("unexpected jira comment bodies: %#v", commentBodies)
+	}
+}
+
 func writeRunnerJiraTestConfig(t *testing.T, repo, baseURL, project string) {
 	t.Helper()
 	raw := `schema_version = 1

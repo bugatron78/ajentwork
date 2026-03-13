@@ -512,6 +512,7 @@ func (r Runner) runDone(globals globalOptions, args []string) (int, error) {
 
 	itemID := args[0]
 	summary := ""
+	postJiraComment := false
 	for i := 1; i < len(args); i++ {
 		switch args[i] {
 		case "--summary":
@@ -520,6 +521,8 @@ func (r Runner) runDone(globals globalOptions, args []string) (int, error) {
 				return 2, errors.New("missing value for --summary")
 			}
 			summary = args[i]
+		case "--jira-comment":
+			postJiraComment = true
 		default:
 			return 2, fmt.Errorf("unknown option for done: %s", args[i])
 		}
@@ -534,15 +537,36 @@ func (r Runner) runDone(globals globalOptions, args []string) (int, error) {
 	if err != nil {
 		return 1, err
 	}
+	jiraCommentPosted := false
+	if postJiraComment {
+		if _, err := r.postLifecycleJiraComment(globals.repoPath, item.ID, summary); err != nil {
+			return 1, err
+		}
+		jiraCommentPosted = true
+	}
 
 	switch globals.format {
 	case domain.FormatBrief:
-		_, err = fmt.Fprintln(r.stdout, render.ItemDoneBrief(item))
+		output := render.ItemDoneBrief(item)
+		if jiraCommentPosted {
+			output += "\nposted Jira milestone comment"
+		}
+		_, err = fmt.Fprintln(r.stdout, output)
 		return 0, err
 	case domain.FormatPrompt:
-		_, err = fmt.Fprintln(r.stdout, render.ItemDonePrompt(item))
+		output := render.ItemDonePrompt(item)
+		if jiraCommentPosted {
+			output += "\nJira Comment: posted"
+		}
+		_, err = fmt.Fprintln(r.stdout, output)
 		return 0, err
 	case domain.FormatJSON:
+		if jiraCommentPosted {
+			return r.renderJSON(struct {
+				Item              domain.Item `json:"item"`
+				JiraCommentPosted bool        `json:"jira_comment_posted"`
+			}{Item: item, JiraCommentPosted: true})
+		}
 		return r.renderJSON(item)
 	default:
 		return 2, fmt.Errorf("unsupported format %q", globals.format)
@@ -563,6 +587,7 @@ func (r Runner) runBlock(globals globalOptions, args []string) (int, error) {
 	summary := ""
 	onID := ""
 	var nextAction *string
+	postJiraComment := false
 
 	for i := 1; i < len(args); i++ {
 		switch args[i] {
@@ -585,6 +610,8 @@ func (r Runner) runBlock(globals globalOptions, args []string) (int, error) {
 			}
 			value := args[i]
 			nextAction = &value
+		case "--jira-comment":
+			postJiraComment = true
 		default:
 			return 2, fmt.Errorf("unknown option for block: %s", args[i])
 		}
@@ -601,15 +628,36 @@ func (r Runner) runBlock(globals globalOptions, args []string) (int, error) {
 	if err != nil {
 		return 1, err
 	}
+	jiraCommentPosted := false
+	if postJiraComment {
+		if _, err := r.postLifecycleJiraComment(globals.repoPath, item.ID, summary); err != nil {
+			return 1, err
+		}
+		jiraCommentPosted = true
+	}
 
 	switch globals.format {
 	case domain.FormatBrief:
-		_, err = fmt.Fprintln(r.stdout, render.ItemBlockedBrief(item))
+		output := render.ItemBlockedBrief(item)
+		if jiraCommentPosted {
+			output += "\nposted Jira milestone comment"
+		}
+		_, err = fmt.Fprintln(r.stdout, output)
 		return 0, err
 	case domain.FormatPrompt:
-		_, err = fmt.Fprintln(r.stdout, render.ItemBlockedPrompt(item))
+		output := render.ItemBlockedPrompt(item)
+		if jiraCommentPosted {
+			output += "\nJira Comment: posted"
+		}
+		_, err = fmt.Fprintln(r.stdout, output)
 		return 0, err
 	case domain.FormatJSON:
+		if jiraCommentPosted {
+			return r.renderJSON(struct {
+				Item              domain.Item `json:"item"`
+				JiraCommentPosted bool        `json:"jira_comment_posted"`
+			}{Item: item, JiraCommentPosted: true})
+		}
 		return r.renderJSON(item)
 	default:
 		return 2, fmt.Errorf("unsupported format %q", globals.format)
@@ -889,6 +937,7 @@ func (r Runner) runHandoff(globals globalOptions, args []string) (int, error) {
 	summary := ""
 	var nextAction *string
 	ttl := 4 * time.Hour
+	postJiraComment := false
 
 	for i := 1; i < len(args); i++ {
 		switch args[i] {
@@ -921,6 +970,8 @@ func (r Runner) runHandoff(globals globalOptions, args []string) (int, error) {
 				return 2, fmt.Errorf("invalid ttl %q", args[i])
 			}
 			ttl = parsed
+		case "--jira-comment":
+			postJiraComment = true
 		default:
 			return 2, fmt.Errorf("unknown option for handoff: %s", args[i])
 		}
@@ -938,15 +989,36 @@ func (r Runner) runHandoff(globals globalOptions, args []string) (int, error) {
 	if err != nil {
 		return 1, err
 	}
+	jiraCommentPosted := false
+	if postJiraComment {
+		if _, err := r.postLifecycleJiraComment(globals.repoPath, item.ID, summary); err != nil {
+			return 1, err
+		}
+		jiraCommentPosted = true
+	}
 
 	switch globals.format {
 	case domain.FormatBrief:
-		_, err = fmt.Fprintln(r.stdout, render.ItemHandedOffBrief(item))
+		output := render.ItemHandedOffBrief(item)
+		if jiraCommentPosted {
+			output += "\nposted Jira milestone comment"
+		}
+		_, err = fmt.Fprintln(r.stdout, output)
 		return 0, err
 	case domain.FormatPrompt:
-		_, err = fmt.Fprintln(r.stdout, render.ItemHandedOffPrompt(item))
+		output := render.ItemHandedOffPrompt(item)
+		if jiraCommentPosted {
+			output += "\nJira Comment: posted"
+		}
+		_, err = fmt.Fprintln(r.stdout, output)
 		return 0, err
 	case domain.FormatJSON:
+		if jiraCommentPosted {
+			return r.renderJSON(struct {
+				Item              domain.Item `json:"item"`
+				JiraCommentPosted bool        `json:"jira_comment_posted"`
+			}{Item: item, JiraCommentPosted: true})
+		}
 		return r.renderJSON(item)
 	default:
 		return 2, fmt.Errorf("unsupported format %q", globals.format)
@@ -1623,6 +1695,15 @@ func (r Runner) runJiraComment(globals globalOptions, args []string) (int, error
 	default:
 		return 2, fmt.Errorf("unsupported format %q", globals.format)
 	}
+}
+
+func (r Runner) postLifecycleJiraComment(repoPath, itemID, summary string) (domain.Item, error) {
+	service := app.CommentJiraIssueService{}
+	return service.Run(app.CommentJiraIssueInput{
+		RepoPath: repoPath,
+		ItemID:   itemID,
+		Summary:  summary,
+	})
 }
 
 func (r Runner) runJiraStatusMap(globals globalOptions, args []string) (int, error) {

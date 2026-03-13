@@ -71,6 +71,7 @@ The first Jira adapter slice supports:
 `aj jira sync` will also try to move the remote Jira issue to the mapped Jira status when the local `aj` item status has changed and Jira exposes a matching transition.
 Use `aj jira status-map` and `aj jira transitions <id>` to inspect the configured mapping and the live remote workflow before syncing.
 Use `aj jira unlink <id>` before moving an item to a different Jira issue, or `aj jira link <id> <key> --replace` when that relink is intentional.
+Linked lifecycle commands can also emit milestone comments directly with `--jira-comment` on `aj done`, `aj block`, and `aj handoff`.
 
 Set credentials through environment variables:
 
