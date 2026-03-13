@@ -1,0 +1,11 @@
+id = "W-HKCME6AL"
+kind = "feature"
+title = "Add Jira lifecycle comment policy config"
+status = "done"
+priority = 1
+created_at = "2026-03-13T18:40:57Z"
+updated_at = "2026-03-13T18:45:07Z"
+goal = "allow repos to default milestone comments on key lifecycle commands while preserving per-command override control"
+summary = "jira lifecycle comment policy config and per-command override are implemented and verified"
+next_action = ""
+depends_on = []

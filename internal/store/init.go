@@ -88,5 +88,10 @@ project = ""
 "Blocked" = "blocked"
 "In Review" = "in_review"
 "Done" = "done"
+
+[jira.lifecycle]
+comment_on_done = false
+comment_on_block = false
+comment_on_handoff = false
 `
 }

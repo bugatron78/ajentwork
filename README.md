@@ -72,6 +72,16 @@ The first Jira adapter slice supports:
 Use `aj jira status-map` and `aj jira transitions <id>` to inspect the configured mapping and the live remote workflow before syncing.
 Use `aj jira unlink <id>` before moving an item to a different Jira issue, or `aj jira link <id> <key> --replace` when that relink is intentional.
 Linked lifecycle commands can also emit milestone comments directly with `--jira-comment` on `aj done`, `aj block`, and `aj handoff`.
+Repos can also default those comments with:
+
+```toml
+[jira.lifecycle]
+comment_on_done = true
+comment_on_block = true
+comment_on_handoff = true
+```
+
+Use `--no-jira-comment` on a specific command to suppress the repo default.
 
 Set credentials through environment variables:
 

@@ -1,0 +1,6 @@
+id = "EV-62WWFXNJBQY2"
+item_id = "W-HKCME6AL"
+type = "done"
+at = "2026-03-13T18:45:07Z"
+actor = "system"
+summary = "jira lifecycle comment policy config and per-command override are implemented and verified"

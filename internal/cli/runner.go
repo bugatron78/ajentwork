@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"ajentwork/internal/app"
+	"ajentwork/internal/config"
 	"ajentwork/internal/domain"
 	"ajentwork/internal/help"
 	"ajentwork/internal/render"
@@ -507,12 +508,13 @@ func (r Runner) runDone(globals globalOptions, args []string) (int, error) {
 		}
 	}
 	if len(args) == 0 {
-		return 2, errors.New("usage: aj done <id> --summary <summary>")
+		return 2, errors.New("usage: aj done <id> --summary <summary> [--jira-comment|--no-jira-comment]")
 	}
 
 	itemID := args[0]
 	summary := ""
 	postJiraComment := false
+	jiraCommentPreferenceSet := false
 	for i := 1; i < len(args); i++ {
 		switch args[i] {
 		case "--summary":
@@ -522,9 +524,31 @@ func (r Runner) runDone(globals globalOptions, args []string) (int, error) {
 			}
 			summary = args[i]
 		case "--jira-comment":
+			if jiraCommentPreferenceSet && !postJiraComment {
+				return 2, errors.New("cannot combine --jira-comment and --no-jira-comment")
+			}
 			postJiraComment = true
+			jiraCommentPreferenceSet = true
+		case "--no-jira-comment":
+			if jiraCommentPreferenceSet && postJiraComment {
+				return 2, errors.New("cannot combine --jira-comment and --no-jira-comment")
+			}
+			postJiraComment = false
+			jiraCommentPreferenceSet = true
 		default:
 			return 2, fmt.Errorf("unknown option for done: %s", args[i])
+		}
+	}
+	if !jiraCommentPreferenceSet {
+		var err error
+		postJiraComment, err = r.lifecycleJiraCommentDefault(globals.repoPath, "done")
+		if err != nil {
+			return 1, err
+		}
+	}
+	if jiraCommentPreferenceSet && postJiraComment {
+		if err := r.ensureItemLinkedToJira(globals.repoPath, itemID); err != nil {
+			return 1, err
 		}
 	}
 
@@ -539,10 +563,12 @@ func (r Runner) runDone(globals globalOptions, args []string) (int, error) {
 	}
 	jiraCommentPosted := false
 	if postJiraComment {
-		if _, err := r.postLifecycleJiraComment(globals.repoPath, item.ID, summary); err != nil {
-			return 1, err
+		if jiraCommentPreferenceSet || item.Jira != nil {
+			if _, err := r.postLifecycleJiraComment(globals.repoPath, item.ID, summary); err != nil {
+				return 1, err
+			}
+			jiraCommentPosted = true
 		}
-		jiraCommentPosted = true
 	}
 
 	switch globals.format {
@@ -580,7 +606,7 @@ func (r Runner) runBlock(globals globalOptions, args []string) (int, error) {
 		}
 	}
 	if len(args) == 0 {
-		return 2, errors.New("usage: aj block <id> --summary <summary> [--on <id>] [--next <action>]")
+		return 2, errors.New("usage: aj block <id> --summary <summary> [--on <id>] [--next <action>] [--jira-comment|--no-jira-comment]")
 	}
 
 	itemID := args[0]
@@ -588,6 +614,7 @@ func (r Runner) runBlock(globals globalOptions, args []string) (int, error) {
 	onID := ""
 	var nextAction *string
 	postJiraComment := false
+	jiraCommentPreferenceSet := false
 
 	for i := 1; i < len(args); i++ {
 		switch args[i] {
@@ -611,9 +638,31 @@ func (r Runner) runBlock(globals globalOptions, args []string) (int, error) {
 			value := args[i]
 			nextAction = &value
 		case "--jira-comment":
+			if jiraCommentPreferenceSet && !postJiraComment {
+				return 2, errors.New("cannot combine --jira-comment and --no-jira-comment")
+			}
 			postJiraComment = true
+			jiraCommentPreferenceSet = true
+		case "--no-jira-comment":
+			if jiraCommentPreferenceSet && postJiraComment {
+				return 2, errors.New("cannot combine --jira-comment and --no-jira-comment")
+			}
+			postJiraComment = false
+			jiraCommentPreferenceSet = true
 		default:
 			return 2, fmt.Errorf("unknown option for block: %s", args[i])
+		}
+	}
+	if !jiraCommentPreferenceSet {
+		var err error
+		postJiraComment, err = r.lifecycleJiraCommentDefault(globals.repoPath, "block")
+		if err != nil {
+			return 1, err
+		}
+	}
+	if jiraCommentPreferenceSet && postJiraComment {
+		if err := r.ensureItemLinkedToJira(globals.repoPath, itemID); err != nil {
+			return 1, err
 		}
 	}
 
@@ -630,10 +679,12 @@ func (r Runner) runBlock(globals globalOptions, args []string) (int, error) {
 	}
 	jiraCommentPosted := false
 	if postJiraComment {
-		if _, err := r.postLifecycleJiraComment(globals.repoPath, item.ID, summary); err != nil {
-			return 1, err
+		if jiraCommentPreferenceSet || item.Jira != nil {
+			if _, err := r.postLifecycleJiraComment(globals.repoPath, item.ID, summary); err != nil {
+				return 1, err
+			}
+			jiraCommentPosted = true
 		}
-		jiraCommentPosted = true
 	}
 
 	switch globals.format {
@@ -929,7 +980,7 @@ func (r Runner) runHandoff(globals globalOptions, args []string) (int, error) {
 		}
 	}
 	if len(args) == 0 {
-		return 2, errors.New("usage: aj handoff <id> --to <agent> --summary <summary> [--next <action>] [--ttl 4h]")
+		return 2, errors.New("usage: aj handoff <id> --to <agent> --summary <summary> [--next <action>] [--ttl 4h] [--jira-comment|--no-jira-comment]")
 	}
 
 	itemID := args[0]
@@ -938,6 +989,7 @@ func (r Runner) runHandoff(globals globalOptions, args []string) (int, error) {
 	var nextAction *string
 	ttl := 4 * time.Hour
 	postJiraComment := false
+	jiraCommentPreferenceSet := false
 
 	for i := 1; i < len(args); i++ {
 		switch args[i] {
@@ -971,9 +1023,31 @@ func (r Runner) runHandoff(globals globalOptions, args []string) (int, error) {
 			}
 			ttl = parsed
 		case "--jira-comment":
+			if jiraCommentPreferenceSet && !postJiraComment {
+				return 2, errors.New("cannot combine --jira-comment and --no-jira-comment")
+			}
 			postJiraComment = true
+			jiraCommentPreferenceSet = true
+		case "--no-jira-comment":
+			if jiraCommentPreferenceSet && postJiraComment {
+				return 2, errors.New("cannot combine --jira-comment and --no-jira-comment")
+			}
+			postJiraComment = false
+			jiraCommentPreferenceSet = true
 		default:
 			return 2, fmt.Errorf("unknown option for handoff: %s", args[i])
+		}
+	}
+	if !jiraCommentPreferenceSet {
+		var err error
+		postJiraComment, err = r.lifecycleJiraCommentDefault(globals.repoPath, "handoff")
+		if err != nil {
+			return 1, err
+		}
+	}
+	if jiraCommentPreferenceSet && postJiraComment {
+		if err := r.ensureItemLinkedToJira(globals.repoPath, itemID); err != nil {
+			return 1, err
 		}
 	}
 
@@ -991,10 +1065,12 @@ func (r Runner) runHandoff(globals globalOptions, args []string) (int, error) {
 	}
 	jiraCommentPosted := false
 	if postJiraComment {
-		if _, err := r.postLifecycleJiraComment(globals.repoPath, item.ID, summary); err != nil {
-			return 1, err
+		if jiraCommentPreferenceSet || item.Jira != nil {
+			if _, err := r.postLifecycleJiraComment(globals.repoPath, item.ID, summary); err != nil {
+				return 1, err
+			}
+			jiraCommentPosted = true
 		}
-		jiraCommentPosted = true
 	}
 
 	switch globals.format {
@@ -1704,6 +1780,35 @@ func (r Runner) postLifecycleJiraComment(repoPath, itemID, summary string) (doma
 		ItemID:   itemID,
 		Summary:  summary,
 	})
+}
+
+func (r Runner) lifecycleJiraCommentDefault(repoPath, command string) (bool, error) {
+	cfg, err := config.Load(repoPath)
+	if err != nil {
+		return false, err
+	}
+	switch command {
+	case "done":
+		return cfg.Jira.Lifecycle.CommentOnDone, nil
+	case "block":
+		return cfg.Jira.Lifecycle.CommentOnBlock, nil
+	case "handoff":
+		return cfg.Jira.Lifecycle.CommentOnHandoff, nil
+	default:
+		return false, fmt.Errorf("unsupported jira lifecycle policy %q", command)
+	}
+}
+
+func (r Runner) ensureItemLinkedToJira(repoPath, itemID string) error {
+	service := app.ShowItemService{}
+	item, err := service.Run(repoPath, itemID)
+	if err != nil {
+		return err
+	}
+	if item.Jira == nil || strings.TrimSpace(item.Jira.Key) == "" {
+		return fmt.Errorf("item %s is not linked to Jira", item.ID)
+	}
+	return nil
 }
 
 func (r Runner) runJiraStatusMap(globals globalOptions, args []string) (int, error) {

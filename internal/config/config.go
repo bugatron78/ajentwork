@@ -23,6 +23,13 @@ type JiraConfig struct {
 	BaseURL   string
 	Project   string
 	StatusMap map[string]domain.Status
+	Lifecycle JiraLifecycleConfig
+}
+
+type JiraLifecycleConfig struct {
+	CommentOnDone    bool
+	CommentOnBlock   bool
+	CommentOnHandoff bool
 }
 
 type JiraSettings struct {
@@ -121,6 +128,19 @@ func Load(repoPath string) (Config, error) {
 				return Config{}, fmt.Errorf("parse jira.status_map status: %w", err)
 			}
 			cfg.Jira.StatusMap[name] = status
+		case "jira.lifecycle":
+			parsed, err := strconv.ParseBool(value)
+			if err != nil {
+				return Config{}, fmt.Errorf("parse %s: %w", key, err)
+			}
+			switch key {
+			case "comment_on_done":
+				cfg.Jira.Lifecycle.CommentOnDone = parsed
+			case "comment_on_block":
+				cfg.Jira.Lifecycle.CommentOnBlock = parsed
+			case "comment_on_handoff":
+				cfg.Jira.Lifecycle.CommentOnHandoff = parsed
+			}
 		}
 	}
 

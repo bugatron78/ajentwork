@@ -25,6 +25,11 @@ project = "ABC"
 [jira.status_map]
 "To Do" = "todo"
 "Done" = "done"
+
+[jira.lifecycle]
+comment_on_done = true
+comment_on_block = false
+comment_on_handoff = true
 `
 	if err := os.WriteFile(filepath.Join(ajDir, "config.toml"), []byte(raw), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -39,6 +44,9 @@ project = "ABC"
 	}
 	if !cfg.Jira.Enabled || cfg.Jira.Project != "ABC" {
 		t.Fatalf("unexpected jira config: %#v", cfg.Jira)
+	}
+	if !cfg.Jira.Lifecycle.CommentOnDone || cfg.Jira.Lifecycle.CommentOnBlock || !cfg.Jira.Lifecycle.CommentOnHandoff {
+		t.Fatalf("unexpected jira lifecycle config: %#v", cfg.Jira.Lifecycle)
 	}
 
 	settings, err := ResolveJiraSettings(repo)
