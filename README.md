@@ -15,6 +15,26 @@
 go build ./cmd/aj
 ```
 
+## Quick Install
+
+Install the latest release binary:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/bugatron78/ajentwork/main/scripts/install.sh | bash
+```
+
+Install a specific version:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/bugatron78/ajentwork/main/scripts/install.sh | bash -s -- --version v0.1.0
+```
+
+Install to a custom directory:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/bugatron78/ajentwork/main/scripts/install.sh | bash -s -- --install-dir "$HOME/.local/bin"
+```
+
 ## Release Artifacts
 
 Build shareable binaries for macOS and Linux:
@@ -42,6 +62,10 @@ Artifacts are written to `dist/`:
 1. Extract the archive for your platform.
 2. Move `aj` onto your `PATH`.
 3. Run `aj --help`.
+
+## Homebrew
+
+A formula template is included at `Formula/ajentwork.rb` for use in a tap-based install flow.
 
 ## Releases
 

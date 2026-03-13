@@ -1,0 +1,6 @@
+id = "EV-WLSTBRFFSQUW"
+item_id = "W-N5SHGH8H"
+type = "updated"
+at = "2026-03-13T15:41:02Z"
+actor = "system"
+summary = "binary install paths now include a curl installer and Homebrew formula"
