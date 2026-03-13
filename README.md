@@ -85,3 +85,7 @@ Artifacts are written to `dist/`:
 ## Releases
 
 Tagged pushes like `v0.1.0` trigger the GitHub Actions release workflow, which builds artifacts and attaches them to a GitHub Release.
+
+## License
+
+Apache License 2.0. See `LICENSE`.
