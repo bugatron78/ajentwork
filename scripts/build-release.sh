@@ -24,6 +24,7 @@ TARGETS=(
 mkdir -p "$DIST_DIR"
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
+rm -f "$DIST_DIR"/aj_*.tar.gz "$DIST_DIR"/aj_*_checksums.txt
 
 for target in "${TARGETS[@]}"; do
   read -r GOOS GOARCH <<<"$target"

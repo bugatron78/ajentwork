@@ -14,7 +14,7 @@ Usage:
 
 Examples:
   install.sh
-  install.sh --version v0.1.0
+  install.sh --version v0.1.1
   install.sh --install-dir "$HOME/.local/bin"
 EOF
 }
