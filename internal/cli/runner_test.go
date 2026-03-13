@@ -740,6 +740,120 @@ func TestRunnerJiraStatusMapAndTransitions(t *testing.T) {
 	}
 }
 
+func TestRunnerJiraUnlinkAndReplace(t *testing.T) {
+	repo := t.TempDir()
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	runner := NewRunner(stdout, stderr)
+
+	if code := runner.Run([]string{"--repo", repo, "init"}); code != 0 {
+		t.Fatalf("init exit code = %d, stderr = %s", code, stderr.String())
+	}
+
+	oldClient := jira.DefaultHTTPClient
+	defer func() { jira.DefaultHTTPClient = oldClient }()
+
+	jira.DefaultHTTPClient = &http.Client{Transport: runnerRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+		wantAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte("agent@example.com:secret"))
+		if r.Header.Get("Authorization") != wantAuth {
+			return runnerJSONResponse(http.StatusUnauthorized, "unauthorized"), nil
+		}
+		switch {
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/rest/api/3/issue/ABC-123"):
+			payload, _ := json.Marshal(map[string]any{
+				"key":  "ABC-123",
+				"self": "https://example.atlassian.net/rest/api/3/issue/10000",
+				"fields": map[string]any{
+					"summary":   "First issue",
+					"issuetype": map[string]any{"name": "Task"},
+					"priority":  map[string]any{"name": "Medium"},
+					"status":    map[string]any{"name": "To Do"},
+					"updated":   "2026-03-13T12:00:00.000+0000",
+				},
+			})
+			return runnerJSONResponse(http.StatusOK, string(payload)), nil
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/rest/api/3/issue/ABC-456"):
+			payload, _ := json.Marshal(map[string]any{
+				"key":  "ABC-456",
+				"self": "https://example.atlassian.net/rest/api/3/issue/10001",
+				"fields": map[string]any{
+					"summary":   "Second issue",
+					"issuetype": map[string]any{"name": "Task"},
+					"priority":  map[string]any{"name": "Medium"},
+					"status":    map[string]any{"name": "To Do"},
+					"updated":   "2026-03-13T12:05:00.000+0000",
+				},
+			})
+			return runnerJSONResponse(http.StatusOK, string(payload)), nil
+		default:
+			return runnerJSONResponse(http.StatusNotFound, "not found"), nil
+		}
+	})}
+
+	writeRunnerJiraTestConfig(t, repo, "https://example.atlassian.net", "ABC")
+	t.Setenv("AJ_JIRA_EMAIL", "agent@example.com")
+	t.Setenv("AJ_JIRA_API_TOKEN", "secret")
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "new", "--kind", "task", "--title", "Relink me", "--goal", "Exercise unlink and replace flows", "--next", "Link the item"}); code != 0 {
+		t.Fatalf("new exit code = %d, stderr = %s", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "ls", "--format", "json"}); code != 0 {
+		t.Fatalf("ls json exit code = %d, stderr = %s", code, stderr.String())
+	}
+	var items []map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &items); err != nil {
+		t.Fatalf("unmarshal list json: %v", err)
+	}
+	itemID := items[0]["id"].(string)
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "jira", "link", itemID, "ABC-123"}); code != 0 {
+		t.Fatalf("jira link exit code = %d, stderr = %s", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "jira", "link", itemID, "ABC-456"}); code != 1 {
+		t.Fatalf("jira relink without replace exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "--replace") {
+		t.Fatalf("expected relink failure to mention --replace, got %s", stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "jira", "unlink", itemID}); code != 1 {
+		t.Fatalf("jira unlink without force exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "--force") {
+		t.Fatalf("expected unlink failure to mention --force, got %s", stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "jira", "unlink", itemID, "--force"}); code != 0 {
+		t.Fatalf("jira unlink force exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "unlinked "+itemID+" from Jira") {
+		t.Fatalf("unexpected jira unlink output: %s", stdout.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "jira", "link", itemID, "ABC-456", "--replace"}); code != 0 {
+		t.Fatalf("jira link replace exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "linked "+itemID+" to Jira ABC-456") {
+		t.Fatalf("unexpected jira link replace output: %s", stdout.String())
+	}
+}
+
 func writeRunnerJiraTestConfig(t *testing.T, repo, baseURL, project string) {
 	t.Helper()
 	raw := `schema_version = 1

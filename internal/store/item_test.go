@@ -1006,6 +1006,129 @@ func TestShowJiraTransitions(t *testing.T) {
 	}
 }
 
+func TestLinkJiraIssueRequiresReplaceAndUnlinkHonorsForce(t *testing.T) {
+	repo := t.TempDir()
+	if _, err := InitRepo(InitOptions{RepoPath: repo}); err != nil {
+		t.Fatalf("init repo: %v", err)
+	}
+
+	oldClient := jira.DefaultHTTPClient
+	defer func() { jira.DefaultHTTPClient = oldClient }()
+
+	jira.DefaultHTTPClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		wantAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte("agent@example.com:secret"))
+		if r.Header.Get("Authorization") != wantAuth {
+			return testJSONResponse(http.StatusUnauthorized, "unauthorized"), nil
+		}
+		switch {
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/rest/api/3/issue/ABC-123"):
+			payload, _ := json.Marshal(map[string]any{
+				"key":  "ABC-123",
+				"self": "https://example.atlassian.net/rest/api/3/issue/10000",
+				"fields": map[string]any{
+					"summary":   "First linked issue",
+					"issuetype": map[string]any{"name": "Task"},
+					"priority":  map[string]any{"name": "Medium"},
+					"status":    map[string]any{"name": "To Do"},
+					"updated":   "2026-03-13T12:00:00.000+0000",
+				},
+			})
+			return testJSONResponse(http.StatusOK, string(payload)), nil
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/rest/api/3/issue/ABC-456"):
+			payload, _ := json.Marshal(map[string]any{
+				"key":  "ABC-456",
+				"self": "https://example.atlassian.net/rest/api/3/issue/10001",
+				"fields": map[string]any{
+					"summary":   "Second linked issue",
+					"issuetype": map[string]any{"name": "Task"},
+					"priority":  map[string]any{"name": "Medium"},
+					"status":    map[string]any{"name": "To Do"},
+					"updated":   "2026-03-13T12:05:00.000+0000",
+				},
+			})
+			return testJSONResponse(http.StatusOK, string(payload)), nil
+		default:
+			return testJSONResponse(http.StatusNotFound, "not found"), nil
+		}
+	})}
+
+	writeJiraTestConfig(t, repo, "https://example.atlassian.net", "ABC")
+	t.Setenv("AJ_JIRA_EMAIL", "agent@example.com")
+	t.Setenv("AJ_JIRA_API_TOKEN", "secret")
+
+	item, err := CreateItem(CreateItemOptions{
+		RepoPath:   repo,
+		Kind:       domain.KindTask,
+		Title:      "Relink safety",
+		Goal:       "Protect existing Jira links",
+		NextAction: "Link to the first Jira issue",
+		Priority:   1,
+	})
+	if err != nil {
+		t.Fatalf("create item: %v", err)
+	}
+
+	if _, err := LinkJiraIssue(LinkJiraIssueOptions{
+		RepoPath: repo,
+		ItemID:   item.ID,
+		IssueKey: "ABC-123",
+	}); err != nil {
+		t.Fatalf("link jira issue: %v", err)
+	}
+
+	if _, err := LinkJiraIssue(LinkJiraIssueOptions{
+		RepoPath: repo,
+		ItemID:   item.ID,
+		IssueKey: "ABC-456",
+	}); err == nil || !strings.Contains(err.Error(), "--replace") {
+		t.Fatalf("expected relink without --replace to fail, got %v", err)
+	}
+
+	replaced, err := LinkJiraIssue(LinkJiraIssueOptions{
+		RepoPath: repo,
+		ItemID:   item.ID,
+		IssueKey: "ABC-456",
+		Replace:  true,
+	})
+	if err != nil {
+		t.Fatalf("relink jira issue with --replace: %v", err)
+	}
+	if replaced.Item.Jira == nil || replaced.Item.Jira.Key != "ABC-456" {
+		t.Fatalf("expected replaced jira key ABC-456, got %#v", replaced.Item.Jira)
+	}
+
+	if _, err := UnlinkJiraIssue(UnlinkJiraIssueOptions{
+		RepoPath: repo,
+		ItemID:   replaced.Item.ID,
+	}); err == nil || !strings.Contains(err.Error(), "sync_state=dirty_local") {
+		t.Fatalf("expected unlink without force to fail on dirty link, got %v", err)
+	}
+
+	unlinked, err := UnlinkJiraIssue(UnlinkJiraIssueOptions{
+		RepoPath: repo,
+		ItemID:   replaced.Item.ID,
+		Force:    true,
+	})
+	if err != nil {
+		t.Fatalf("force unlink jira issue: %v", err)
+	}
+	if unlinked.Jira != nil {
+		t.Fatalf("expected jira link to be cleared, got %#v", unlinked.Jira)
+	}
+
+	relinked, err := LinkJiraIssue(LinkJiraIssueOptions{
+		RepoPath: repo,
+		ItemID:   item.ID,
+		IssueKey: "ABC-456",
+	})
+	if err != nil {
+		t.Fatalf("link second jira issue after unlink: %v", err)
+	}
+	if relinked.Item.Jira == nil || relinked.Item.Jira.Key != "ABC-456" {
+		t.Fatalf("expected relinked jira key ABC-456, got %#v", relinked.Item.Jira)
+	}
+}
+
 func TestCommentJiraIssue(t *testing.T) {
 	repo := t.TempDir()
 	if _, err := InitRepo(InitOptions{RepoPath: repo}); err != nil {

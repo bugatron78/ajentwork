@@ -299,6 +299,7 @@ type LinkJiraIssueInput struct {
 	RepoPath string
 	ItemID   string
 	IssueKey string
+	Replace  bool
 }
 
 type LinkJiraIssueService struct{}
@@ -308,6 +309,23 @@ func (s LinkJiraIssueService) Run(input LinkJiraIssueInput) (store.LinkJiraIssue
 		RepoPath: input.RepoPath,
 		ItemID:   input.ItemID,
 		IssueKey: input.IssueKey,
+		Replace:  input.Replace,
+	})
+}
+
+type UnlinkJiraIssueInput struct {
+	RepoPath string
+	ItemID   string
+	Force    bool
+}
+
+type UnlinkJiraIssueService struct{}
+
+func (s UnlinkJiraIssueService) Run(input UnlinkJiraIssueInput) (domain.Item, error) {
+	return store.UnlinkJiraIssue(store.UnlinkJiraIssueOptions{
+		RepoPath: input.RepoPath,
+		ItemID:   input.ItemID,
+		Force:    input.Force,
 	})
 }
 

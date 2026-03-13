@@ -118,6 +118,7 @@ type LinkJiraIssueOptions struct {
 	RepoPath string
 	ItemID   string
 	IssueKey string
+	Replace  bool
 }
 
 type LinkJiraIssueResult struct {
@@ -142,6 +143,12 @@ type CommentJiraIssueOptions struct {
 	RepoPath string
 	ItemID   string
 	Summary  string
+}
+
+type UnlinkJiraIssueOptions struct {
+	RepoPath string
+	ItemID   string
+	Force    bool
 }
 
 type JiraStatusMapEntry struct {
@@ -758,6 +765,9 @@ func LinkJiraIssue(opts LinkJiraIssueOptions) (LinkJiraIssueResult, error) {
 	if item.Jira != nil && strings.EqualFold(item.Jira.Key, strings.TrimSpace(opts.IssueKey)) {
 		return LinkJiraIssueResult{Item: item, AlreadyLinked: true}, nil
 	}
+	if item.Jira != nil && strings.TrimSpace(item.Jira.Key) != "" && !opts.Replace {
+		return LinkJiraIssueResult{}, fmt.Errorf("item %s is already linked to Jira %s; rerun with --replace or use `aj jira unlink %s` first", item.ID, item.Jira.Key, item.ID)
+	}
 	if existing, ok, err := findItemByJiraKey(opts.RepoPath, opts.IssueKey); err != nil {
 		return LinkJiraIssueResult{}, err
 	} else if ok && existing.ID != item.ID {
@@ -792,6 +802,32 @@ func LinkJiraIssue(opts LinkJiraIssueOptions) (LinkJiraIssueResult, error) {
 		return LinkJiraIssueResult{}, err
 	}
 	return LinkJiraIssueResult{Item: item}, nil
+}
+
+func UnlinkJiraIssue(opts UnlinkJiraIssueOptions) (domain.Item, error) {
+	if strings.TrimSpace(opts.ItemID) == "" {
+		return domain.Item{}, errors.New("item id is required")
+	}
+
+	item, itemDir, err := loadItemForMutation(opts.RepoPath, opts.ItemID)
+	if err != nil {
+		return domain.Item{}, err
+	}
+	if item.Jira == nil || strings.TrimSpace(item.Jira.Key) == "" {
+		return domain.Item{}, fmt.Errorf("item %s is not linked to Jira", item.ID)
+	}
+	if !opts.Force && item.Jira.SyncState != "" && item.Jira.SyncState != "clean" {
+		return domain.Item{}, fmt.Errorf("item %s has jira sync_state=%s; rerun with --force to unlink anyway", item.ID, item.Jira.SyncState)
+	}
+
+	oldKey := item.Jira.Key
+	item.Jira = nil
+	item.UpdatedAt = time.Now().UTC().Truncate(time.Second)
+	item.Summary = fmt.Sprintf("unlinked from Jira %s", oldKey)
+	if err := persistItemMutation(itemDir, item, "unlinked_external", "system", item.Summary); err != nil {
+		return domain.Item{}, err
+	}
+	return item, nil
 }
 
 func SyncJiraIssue(opts SyncJiraIssueOptions) (SyncJiraIssueResult, error) {

@@ -1291,6 +1291,8 @@ func (r Runner) runJira(globals globalOptions, args []string) (int, error) {
 		return r.runJiraPush(globals, args[1:])
 	case "link":
 		return r.runJiraLink(globals, args[1:])
+	case "unlink":
+		return r.runJiraUnlink(globals, args[1:])
 	case "sync":
 		return r.runJiraSync(globals, args[1:])
 	case "comment":
@@ -1416,15 +1418,28 @@ func (r Runner) runJiraLink(globals globalOptions, args []string) (int, error) {
 			return r.renderCommandHelp("jira", globals.format)
 		}
 	}
-	if len(args) != 2 {
-		return 2, errors.New("usage: aj jira link <id> <key>")
+	if len(args) < 2 {
+		return 2, errors.New("usage: aj jira link <id> <key> [--replace]")
+	}
+
+	itemID := args[0]
+	issueKey := args[1]
+	replace := false
+	for i := 2; i < len(args); i++ {
+		switch args[i] {
+		case "--replace":
+			replace = true
+		default:
+			return 2, fmt.Errorf("unknown option for jira link: %s", args[i])
+		}
 	}
 
 	service := app.LinkJiraIssueService{}
 	result, err := service.Run(app.LinkJiraIssueInput{
 		RepoPath: globals.repoPath,
-		ItemID:   args[0],
-		IssueKey: args[1],
+		ItemID:   itemID,
+		IssueKey: issueKey,
+		Replace:  replace,
 	})
 	if err != nil {
 		return 1, err
@@ -1447,6 +1462,51 @@ func (r Runner) runJiraLink(globals globalOptions, args []string) (int, error) {
 		return 0, err
 	case domain.FormatJSON:
 		return r.renderJSON(result)
+	default:
+		return 2, fmt.Errorf("unsupported format %q", globals.format)
+	}
+}
+
+func (r Runner) runJiraUnlink(globals globalOptions, args []string) (int, error) {
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			return r.renderCommandHelp("jira", globals.format)
+		}
+	}
+	if len(args) == 0 {
+		return 2, errors.New("usage: aj jira unlink <id> [--force]")
+	}
+
+	itemID := args[0]
+	force := false
+	for i := 1; i < len(args); i++ {
+		switch args[i] {
+		case "--force":
+			force = true
+		default:
+			return 2, fmt.Errorf("unknown option for jira unlink: %s", args[i])
+		}
+	}
+
+	service := app.UnlinkJiraIssueService{}
+	item, err := service.Run(app.UnlinkJiraIssueInput{
+		RepoPath: globals.repoPath,
+		ItemID:   itemID,
+		Force:    force,
+	})
+	if err != nil {
+		return 1, err
+	}
+
+	switch globals.format {
+	case domain.FormatBrief:
+		_, err = fmt.Fprintf(r.stdout, "unlinked %s from Jira\n", item.ID)
+		return 0, err
+	case domain.FormatPrompt:
+		_, err = fmt.Fprintf(r.stdout, "Status: unlinked from Jira\nID: %s\nSummary: %s\n", item.ID, item.Summary)
+		return 0, err
+	case domain.FormatJSON:
+		return r.renderJSON(item)
 	default:
 		return 2, fmt.Errorf("unsupported format %q", globals.format)
 	}
