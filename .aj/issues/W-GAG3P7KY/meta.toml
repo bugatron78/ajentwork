@@ -1,0 +1,11 @@
+id = "W-GAG3P7KY"
+kind = "task"
+title = "Implement changes feed"
+status = "done"
+priority = 0
+created_at = "2026-03-13T14:59:33Z"
+updated_at = "2026-03-13T15:03:48Z"
+goal = "let agents inspect recent activity across the repo"
+summary = "changes command now exposes recent repo activity"
+next_action = ""
+depends_on = []

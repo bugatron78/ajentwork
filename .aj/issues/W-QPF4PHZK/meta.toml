@@ -1,0 +1,11 @@
+id = "W-QPF4PHZK"
+kind = "task"
+title = "Auto-release done work and show item history"
+status = "done"
+priority = 0
+created_at = "2026-03-13T15:05:46Z"
+updated_at = "2026-03-13T15:07:46Z"
+goal = "clean up lease semantics and make item event history visible from show"
+summary = "done items now auto-release and show can include recent history"
+next_action = ""
+depends_on = []

@@ -1,0 +1,10 @@
+id = "W-BJ9PHCXU"
+kind = "task"
+title = "Implement item lifecycle commands"
+status = "done"
+priority = 0
+created_at = "2026-03-13T14:37:12Z"
+updated_at = "2026-03-13T14:37:20Z"
+goal = "let aj update and complete work items"
+summary = "update and done commands are implemented and tested"
+next_action = ""

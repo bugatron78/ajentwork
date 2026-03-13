@@ -1,0 +1,11 @@
+id = "W-3W6UMHL9"
+kind = "task"
+title = "Implement next and inbox views"
+status = "done"
+priority = 0
+created_at = "2026-03-13T14:46:53Z"
+updated_at = "2026-03-13T15:03:48Z"
+goal = "help agents find their next action and owned work"
+summary = "next and inbox views shipped with dependency awareness"
+next_action = ""
+depends_on = ["W-4MDDBM9C"]

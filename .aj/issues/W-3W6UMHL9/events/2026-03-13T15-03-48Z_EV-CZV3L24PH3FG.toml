@@ -1,0 +1,6 @@
+id = "EV-CZV3L24PH3FG"
+item_id = "W-3W6UMHL9"
+type = "done"
+at = "2026-03-13T15:03:48Z"
+actor = "system"
+summary = "next and inbox views shipped with dependency awareness"

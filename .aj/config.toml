@@ -1,0 +1,15 @@
+schema_version = 1
+default_output = "brief"
+default_lease_ttl = "4h"
+
+[jira]
+enabled = false
+base_url = ""
+project = ""
+
+[jira.status_map]
+"To Do" = "todo"
+"In Progress" = "in_progress"
+"Blocked" = "blocked"
+"In Review" = "in_review"
+"Done" = "done"

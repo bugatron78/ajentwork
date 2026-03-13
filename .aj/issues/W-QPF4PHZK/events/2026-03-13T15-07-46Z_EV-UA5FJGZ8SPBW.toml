@@ -1,0 +1,6 @@
+id = "EV-UA5FJGZ8SPBW"
+item_id = "W-QPF4PHZK"
+type = "done"
+at = "2026-03-13T15:07:46Z"
+actor = "system"
+summary = "done items now auto-release and show can include recent history"

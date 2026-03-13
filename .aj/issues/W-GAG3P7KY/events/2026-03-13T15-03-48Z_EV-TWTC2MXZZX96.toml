@@ -1,0 +1,6 @@
+id = "EV-TWTC2MXZZX96"
+item_id = "W-GAG3P7KY"
+type = "done"
+at = "2026-03-13T15:03:48Z"
+actor = "system"
+summary = "changes command now exposes recent repo activity"
