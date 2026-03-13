@@ -151,6 +151,115 @@ func TestTakeAndReleaseItem(t *testing.T) {
 	}
 }
 
+func TestBlockUnblockHandoffAndReopenItem(t *testing.T) {
+	repo := t.TempDir()
+	if _, err := InitRepo(InitOptions{RepoPath: repo}); err != nil {
+		t.Fatalf("init repo: %v", err)
+	}
+
+	dependency, err := CreateItem(CreateItemOptions{
+		RepoPath:   repo,
+		Kind:       domain.KindTask,
+		Title:      "Dependency",
+		Goal:       "Unblock other work",
+		NextAction: "Ship dependency",
+		Priority:   0,
+	})
+	if err != nil {
+		t.Fatalf("create dependency: %v", err)
+	}
+
+	item, err := CreateItem(CreateItemOptions{
+		RepoPath:   repo,
+		Kind:       domain.KindTask,
+		Title:      "Coordination lifecycle",
+		Goal:       "Exercise block handoff and reopen flows",
+		NextAction: "Start work",
+		Priority:   1,
+	})
+	if err != nil {
+		t.Fatalf("create item: %v", err)
+	}
+
+	blocked, err := BlockItem(BlockItemOptions{
+		RepoPath: repo,
+		ItemID:   item.ID,
+		Summary:  "waiting on dependency",
+		OnID:     dependency.ID,
+	})
+	if err != nil {
+		t.Fatalf("block item: %v", err)
+	}
+	if blocked.Status != domain.StatusBlocked {
+		t.Fatalf("expected blocked status, got %s", blocked.Status)
+	}
+	if blocked.NextAction != "Wait for "+dependency.ID {
+		t.Fatalf("expected wait next action, got %q", blocked.NextAction)
+	}
+	if len(blocked.DependsOn) != 1 || blocked.DependsOn[0] != dependency.ID {
+		t.Fatalf("expected dependency on %s, got %#v", dependency.ID, blocked.DependsOn)
+	}
+
+	next := "Resume implementation"
+	unblocked, err := UnblockItem(UnblockItemOptions{
+		RepoPath:   repo,
+		ItemID:     item.ID,
+		Summary:    "dependency shipped",
+		NextAction: &next,
+	})
+	if err != nil {
+		t.Fatalf("unblock item: %v", err)
+	}
+	if unblocked.Status != domain.StatusTodo {
+		t.Fatalf("expected todo status after unblock, got %s", unblocked.Status)
+	}
+	if unblocked.NextAction != next {
+		t.Fatalf("expected updated next action %q, got %q", next, unblocked.NextAction)
+	}
+
+	handedOff, err := HandoffItem(HandoffItemOptions{
+		RepoPath: repo,
+		ItemID:   item.ID,
+		ToAgent:  "reviewer-1",
+		Summary:  "implementation ready for review",
+		TTL:      time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("handoff item: %v", err)
+	}
+	if handedOff.Lease == nil || handedOff.Lease.Owner != "reviewer-1" {
+		t.Fatalf("expected reviewer lease, got %#v", handedOff.Lease)
+	}
+
+	done, err := CompleteItem(CompleteItemOptions{
+		RepoPath: repo,
+		ItemID:   item.ID,
+		Summary:  "review completed",
+	})
+	if err != nil {
+		t.Fatalf("complete item: %v", err)
+	}
+	if done.Status != domain.StatusDone {
+		t.Fatalf("expected done status, got %s", done.Status)
+	}
+
+	reopened, err := ReopenItem(ReopenItemOptions{
+		RepoPath:   repo,
+		ItemID:     item.ID,
+		Summary:    "follow-up regression found",
+		NextAction: "Add a failing regression test",
+	})
+	if err != nil {
+		t.Fatalf("reopen item: %v", err)
+	}
+	if reopened.Status != domain.StatusTodo {
+		t.Fatalf("expected todo status after reopen, got %s", reopened.Status)
+	}
+	if reopened.NextAction != "Add a failing regression test" {
+		t.Fatalf("unexpected reopen next action %q", reopened.NextAction)
+	}
+}
+
 func TestCompleteItemClearsExistingLease(t *testing.T) {
 	repo := t.TempDir()
 	if _, err := InitRepo(InitOptions{RepoPath: repo}); err != nil {

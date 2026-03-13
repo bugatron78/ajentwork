@@ -1,0 +1,11 @@
+id = "W-3TVVLX8K"
+kind = "task"
+title = "Implement block handoff and reopen commands"
+status = "done"
+priority = 0
+created_at = "2026-03-13T16:40:48Z"
+updated_at = "2026-03-13T16:47:21Z"
+goal = "close the gap between documented coordination workflows and the actual CLI"
+summary = "block unblock handoff and reopen commands are implemented and tested"
+next_action = ""
+depends_on = []

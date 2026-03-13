@@ -1,0 +1,6 @@
+id = "EV-589TQK5SLPJ3"
+item_id = "W-N5SHGH8H"
+type = "updated"
+at = "2026-03-13T16:47:21Z"
+actor = "system"
+summary = "coordination lifecycle now includes block unblock handoff and reopen commands"

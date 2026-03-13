@@ -77,6 +77,46 @@ func (s CompleteItemService) Run(input CompleteItemInput) (domain.Item, error) {
 	})
 }
 
+type BlockItemInput struct {
+	RepoPath   string
+	ItemID     string
+	Summary    string
+	OnID       string
+	NextAction *string
+}
+
+type BlockItemService struct{}
+
+func (s BlockItemService) Run(input BlockItemInput) (domain.Item, error) {
+	return store.BlockItem(store.BlockItemOptions{
+		RepoPath:   input.RepoPath,
+		ItemID:     input.ItemID,
+		Summary:    input.Summary,
+		OnID:       input.OnID,
+		NextAction: input.NextAction,
+	})
+}
+
+type UnblockItemInput struct {
+	RepoPath   string
+	ItemID     string
+	Summary    string
+	NextAction *string
+	Status     *domain.Status
+}
+
+type UnblockItemService struct{}
+
+func (s UnblockItemService) Run(input UnblockItemInput) (domain.Item, error) {
+	return store.UnblockItem(store.UnblockItemOptions{
+		RepoPath:   input.RepoPath,
+		ItemID:     input.ItemID,
+		Summary:    input.Summary,
+		NextAction: input.NextAction,
+		Status:     input.Status,
+	})
+}
+
 type TakeItemInput struct {
 	RepoPath string
 	ItemID   string
@@ -108,6 +148,48 @@ func (s ReleaseItemService) Run(input ReleaseItemInput) (domain.Item, error) {
 	return store.ReleaseItem(store.ReleaseItemOptions{
 		RepoPath: input.RepoPath,
 		ItemID:   input.ItemID,
+	})
+}
+
+type HandoffItemInput struct {
+	RepoPath   string
+	ItemID     string
+	ToAgent    string
+	Summary    string
+	NextAction *string
+	TTL        time.Duration
+}
+
+type HandoffItemService struct{}
+
+func (s HandoffItemService) Run(input HandoffItemInput) (domain.Item, error) {
+	return store.HandoffItem(store.HandoffItemOptions{
+		RepoPath:   input.RepoPath,
+		ItemID:     input.ItemID,
+		ToAgent:    input.ToAgent,
+		Summary:    input.Summary,
+		NextAction: input.NextAction,
+		TTL:        input.TTL,
+	})
+}
+
+type ReopenItemInput struct {
+	RepoPath   string
+	ItemID     string
+	Summary    string
+	NextAction string
+	Status     *domain.Status
+}
+
+type ReopenItemService struct{}
+
+func (s ReopenItemService) Run(input ReopenItemInput) (domain.Item, error) {
+	return store.ReopenItem(store.ReopenItemOptions{
+		RepoPath:   input.RepoPath,
+		ItemID:     input.ItemID,
+		Summary:    input.Summary,
+		NextAction: input.NextAction,
+		Status:     input.Status,
 	})
 }
 

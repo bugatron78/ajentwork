@@ -96,6 +96,46 @@ func DefaultRegistry() Registry {
 			SearchKeywords: []string{"progress", "status", "summary"},
 		},
 		{
+			Name:    "block",
+			Summary: "mark a local work item blocked",
+			Purpose: "Move a local work item into blocked status and optionally attach a dependency that explains what must finish first.",
+			Usage:   "aj block <id> --summary <summary> [--on <id>] [--next <action>]",
+			Arguments: []ArgDoc{
+				{Name: "id", Description: "required work item identifier such as W-8F3K2P1Q", Required: true},
+			},
+			Options: []OptionDoc{
+				{Name: "--summary <summary>", Description: "required one-line blocker summary"},
+				{Name: "--on <id>", Description: "optional dependency item identifier to attach and wait on"},
+				{Name: "--next <action>", Description: "optional replacement next action; defaults to waiting on the dependency when --on is used"},
+			},
+			Examples: []ExampleDoc{
+				{Label: "Block on another item", Command: "aj block W-8F3K2P1Q --on W-2M9A1C7L --summary \"waiting on schema decision\""},
+			},
+			Related:        []string{"unblock", "link", "show"},
+			WorkflowTags:   []string{"coordination", "blocked"},
+			SearchKeywords: []string{"blocked", "wait", "dependency"},
+		},
+		{
+			Name:    "unblock",
+			Summary: "clear blocked status from a local work item",
+			Purpose: "Move a blocked item back into active work, usually after a dependency is resolved or external blocker is removed.",
+			Usage:   "aj unblock <id> --summary <summary> [--next <action>] [--status <status>]",
+			Arguments: []ArgDoc{
+				{Name: "id", Description: "required work item identifier such as W-8F3K2P1Q", Required: true},
+			},
+			Options: []OptionDoc{
+				{Name: "--summary <summary>", Description: "required one-line unblock summary"},
+				{Name: "--next <action>", Description: "optional replacement next action"},
+				{Name: "--status <status>", Description: "optional replacement status after unblocking; default todo"},
+			},
+			Examples: []ExampleDoc{
+				{Label: "Resume work", Command: "aj unblock W-8F3K2P1Q --summary \"schema approved\" --status in_progress --next \"finish cache updates\""},
+			},
+			Related:        []string{"block", "update", "show"},
+			WorkflowTags:   []string{"coordination", "blocked"},
+			SearchKeywords: []string{"unblock", "resume", "waiting"},
+		},
+		{
 			Name:    "done",
 			Summary: "complete a local work item",
 			Purpose: "Mark a local work item done, record its completion summary, and clear its next action.",
@@ -148,6 +188,48 @@ func DefaultRegistry() Registry {
 			Related:        []string{"take", "show", "ls"},
 			WorkflowTags:   []string{"coordination", "claim"},
 			SearchKeywords: []string{"release", "unclaim", "lease"},
+		},
+		{
+			Name:    "handoff",
+			Summary: "transfer a local work item lease to another agent",
+			Purpose: "Assign a new lease owner with a handoff summary so another agent can continue the work without ambiguity.",
+			Usage:   "aj handoff <id> --to <agent> --summary <summary> [--next <action>] [--ttl 4h]",
+			Arguments: []ArgDoc{
+				{Name: "id", Description: "required work item identifier such as W-8F3K2P1Q", Required: true},
+			},
+			Options: []OptionDoc{
+				{Name: "--to <agent>", Description: "required destination agent name"},
+				{Name: "--summary <summary>", Description: "required compact handoff summary"},
+				{Name: "--next <action>", Description: "optional replacement next action for the receiving agent"},
+				{Name: "--ttl <duration>", Description: "optional lease duration such as 30m or 4h; default 4h"},
+			},
+			Examples: []ExampleDoc{
+				{Label: "Hand off for review", Command: "aj handoff W-8F3K2P1Q --to reviewer-1 --summary \"implementation ready for review\" --next \"verify CLI behavior\""},
+			},
+			Related:        []string{"take", "release", "show"},
+			Safety:         []string{"Use handoff when ownership is explicitly changing, rather than force-claiming another agent's active lease."},
+			WorkflowTags:   []string{"coordination", "handoff"},
+			SearchKeywords: []string{"handoff", "transfer", "lease"},
+		},
+		{
+			Name:    "reopen",
+			Summary: "reopen completed work with a fresh next action",
+			Purpose: "Move a done item back into active work when follow-up or regression handling is needed.",
+			Usage:   "aj reopen <id> --summary <summary> --next <action> [--status <status>]",
+			Arguments: []ArgDoc{
+				{Name: "id", Description: "required work item identifier such as W-8F3K2P1Q", Required: true},
+			},
+			Options: []OptionDoc{
+				{Name: "--summary <summary>", Description: "required one-line reopen summary"},
+				{Name: "--next <action>", Description: "required next action after reopening"},
+				{Name: "--status <status>", Description: "optional replacement status after reopening; default todo"},
+			},
+			Examples: []ExampleDoc{
+				{Label: "Reopen a regression", Command: "aj reopen W-8F3K2P1Q --summary \"regression reproduced\" --next \"add a failing test\" --status in_progress"},
+			},
+			Related:        []string{"done", "update", "show"},
+			WorkflowTags:   []string{"core", "reopen"},
+			SearchKeywords: []string{"reopen", "regression", "done"},
 		},
 		{
 			Name:    "next",
@@ -354,8 +436,8 @@ func DefaultRegistry() Registry {
 			Topic: "record and communicate blocked work",
 			Steps: []string{
 				"1. Use `aj block <id> --on <dependency> --summary \"...\"` when work cannot proceed.",
-				"2. Put the immediate recovery action in `--next` when update support is used.",
-				"3. Sync milestone changes to Jira only when the work is linked and human visibility matters.",
+				"2. Add `--next \"...\"` when the recovery step should be explicit instead of just waiting.",
+				"3. Use `aj unblock <id> --summary \"...\" --status in_progress --next \"...\"` when the blocker is cleared.",
 			},
 		},
 		"progress": {
@@ -374,6 +456,15 @@ func DefaultRegistry() Registry {
 				"1. Use `aj take <id> --agent coder-1` before starting work.",
 				"2. Use `aj show <id>` to confirm the lease and expiry.",
 				"3. Use `aj release <id>` if you are handing the work back without finishing it.",
+			},
+		},
+		"handoff": {
+			Name:  "handoff",
+			Topic: "transfer ownership without losing context",
+			Steps: []string{
+				"1. Use `aj show <id>` before handing work off so the current snapshot is accurate.",
+				"2. Use `aj handoff <id> --to reviewer-1 --summary \"...\" --next \"...\"` to transfer the lease.",
+				"3. Use `aj inbox --agent reviewer-1` or `aj next --agent reviewer-1` so the receiving agent can pick it up immediately.",
 			},
 		},
 		"queue": {
@@ -434,6 +525,14 @@ func DefaultRegistry() Registry {
 			Examples: []ExampleDoc{
 				{Label: "Update a task", Command: "aj update W-8F3K2P1Q --summary \"started implementation\" --status in_progress --next \"write tests\""},
 				{Label: "Complete a task", Command: "aj done W-8F3K2P1Q --summary \"tests added and command shipped\""},
+				{Label: "Reopen completed work", Command: "aj reopen W-8F3K2P1Q --summary \"regression reproduced\" --next \"add a failing test\""},
+			},
+		},
+		"blocked": {
+			Topic: "blocked",
+			Examples: []ExampleDoc{
+				{Label: "Block on a dependency", Command: "aj block W-8F3K2P1Q --on W-2M9A1C7L --summary \"waiting on schema decision\""},
+				{Label: "Unblock and resume", Command: "aj unblock W-8F3K2P1Q --summary \"schema approved\" --status in_progress --next \"finish cache updates\""},
 			},
 		},
 		"claim": {
@@ -441,6 +540,7 @@ func DefaultRegistry() Registry {
 			Examples: []ExampleDoc{
 				{Label: "Claim work", Command: "aj take W-8F3K2P1Q --agent coder-1 --ttl 4h"},
 				{Label: "Release work", Command: "aj release W-8F3K2P1Q"},
+				{Label: "Hand off work", Command: "aj handoff W-8F3K2P1Q --to reviewer-1 --summary \"implementation ready\" --next \"review CLI output\""},
 			},
 		},
 		"queue": {

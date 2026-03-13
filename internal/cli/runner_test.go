@@ -137,6 +137,93 @@ func TestRunnerTakeAndRelease(t *testing.T) {
 	}
 }
 
+func TestRunnerBlockUnblockHandoffAndReopen(t *testing.T) {
+	repo := t.TempDir()
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	runner := NewRunner(stdout, stderr)
+
+	if code := runner.Run([]string{"--repo", repo, "init"}); code != 0 {
+		t.Fatalf("init exit code = %d, stderr = %s", code, stderr.String())
+	}
+
+	if code := runner.Run([]string{"--repo", repo, "new", "--kind", "task", "--title", "Dependency", "--goal", "Unblock downstream work", "--next", "Ship dependency"}); code != 0 {
+		t.Fatalf("new dependency exit code = %d, stderr = %s", code, stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "new", "--kind", "task", "--title", "Coordinated work", "--goal", "Exercise coordination commands", "--next", "Start work"}); code != 0 {
+		t.Fatalf("new item exit code = %d, stderr = %s", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "ls", "--format", "json"}); code != 0 {
+		t.Fatalf("ls json exit code = %d, stderr = %s", code, stderr.String())
+	}
+	var items []map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &items); err != nil {
+		t.Fatalf("unmarshal list json: %v", err)
+	}
+
+	var dependencyID, itemID string
+	for _, item := range items {
+		title, _ := item["title"].(string)
+		id, _ := item["id"].(string)
+		switch title {
+		case "Dependency":
+			dependencyID = id
+		case "Coordinated work":
+			itemID = id
+		}
+	}
+	if dependencyID == "" || itemID == "" {
+		t.Fatalf("expected both item ids, got dependency=%q item=%q", dependencyID, itemID)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "block", itemID, "--on", dependencyID, "--summary", "waiting on dependency"}); code != 0 {
+		t.Fatalf("block exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "blocked "+itemID) {
+		t.Fatalf("unexpected block output: %s", stdout.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "unblock", itemID, "--summary", "dependency shipped", "--status", "in_progress", "--next", "Resume implementation"}); code != 0 {
+		t.Fatalf("unblock exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "unblocked "+itemID) {
+		t.Fatalf("unexpected unblock output: %s", stdout.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "handoff", itemID, "--to", "reviewer-1", "--summary", "implementation ready for review"}); code != 0 {
+		t.Fatalf("handoff exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "handed off "+itemID+" to reviewer-1") {
+		t.Fatalf("unexpected handoff output: %s", stdout.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "done", itemID, "--summary", "review completed"}); code != 0 {
+		t.Fatalf("done exit code = %d, stderr = %s", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "reopen", itemID, "--summary", "regression found", "--next", "Add a failing test"}); code != 0 {
+		t.Fatalf("reopen exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "reopened "+itemID) {
+		t.Fatalf("unexpected reopen output: %s", stdout.String())
+	}
+}
+
 func TestRunnerNextAndInbox(t *testing.T) {
 	repo := t.TempDir()
 	stdout := &bytes.Buffer{}

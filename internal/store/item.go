@@ -37,6 +37,22 @@ type CompleteItemOptions struct {
 	Summary  string
 }
 
+type BlockItemOptions struct {
+	RepoPath   string
+	ItemID     string
+	Summary    string
+	OnID       string
+	NextAction *string
+}
+
+type UnblockItemOptions struct {
+	RepoPath   string
+	ItemID     string
+	Summary    string
+	NextAction *string
+	Status     *domain.Status
+}
+
 type TakeItemOptions struct {
 	RepoPath string
 	ItemID   string
@@ -48,6 +64,23 @@ type TakeItemOptions struct {
 type ReleaseItemOptions struct {
 	RepoPath string
 	ItemID   string
+}
+
+type HandoffItemOptions struct {
+	RepoPath   string
+	ItemID     string
+	ToAgent    string
+	Summary    string
+	NextAction *string
+	TTL        time.Duration
+}
+
+type ReopenItemOptions struct {
+	RepoPath   string
+	ItemID     string
+	Summary    string
+	NextAction string
+	Status     *domain.Status
 }
 
 type LinkDependencyOptions struct {
@@ -237,6 +270,112 @@ func CompleteItem(opts CompleteItemOptions) (domain.Item, error) {
 	return item, nil
 }
 
+func BlockItem(opts BlockItemOptions) (domain.Item, error) {
+	if strings.TrimSpace(opts.ItemID) == "" {
+		return domain.Item{}, errors.New("item id is required")
+	}
+	if strings.TrimSpace(opts.Summary) == "" {
+		return domain.Item{}, errors.New("summary is required")
+	}
+	if strings.TrimSpace(opts.OnID) == opts.ItemID {
+		return domain.Item{}, errors.New("an item cannot depend on itself")
+	}
+
+	if dependencyID := strings.TrimSpace(opts.OnID); dependencyID != "" {
+		if _, err := GetItem(opts.RepoPath, dependencyID); err != nil {
+			return domain.Item{}, fmt.Errorf("dependency item %s not found", dependencyID)
+		}
+	}
+
+	item, itemDir, err := loadItemForMutation(opts.RepoPath, opts.ItemID)
+	if err != nil {
+		return domain.Item{}, err
+	}
+	if item.Status == domain.StatusDone || item.Status == domain.StatusCanceled {
+		return domain.Item{}, fmt.Errorf("item %s is already complete; use `aj reopen` first", item.ID)
+	}
+
+	item.Status = domain.StatusBlocked
+	item.Summary = strings.TrimSpace(opts.Summary)
+	if opts.NextAction != nil {
+		item.NextAction = strings.TrimSpace(*opts.NextAction)
+	} else if dependencyID := strings.TrimSpace(opts.OnID); dependencyID != "" {
+		item.NextAction = fmt.Sprintf("Wait for %s", dependencyID)
+	}
+
+	if dependencyID := strings.TrimSpace(opts.OnID); dependencyID != "" {
+		alreadyLinked := false
+		for _, depID := range item.DependsOn {
+			if depID == dependencyID {
+				alreadyLinked = true
+				break
+			}
+		}
+		if !alreadyLinked {
+			item.DependsOn = append(item.DependsOn, dependencyID)
+			sort.Strings(item.DependsOn)
+		}
+	}
+
+	if domain.StatusRequiresNextAction(item.Status) && strings.TrimSpace(item.NextAction) == "" {
+		return domain.Item{}, fmt.Errorf("status %s requires a next action", item.Status)
+	}
+
+	item.UpdatedAt = time.Now().UTC().Truncate(time.Second)
+	if err := persistItemMutation(itemDir, item, "blocked", "system", item.Summary); err != nil {
+		return domain.Item{}, err
+	}
+
+	return item, nil
+}
+
+func UnblockItem(opts UnblockItemOptions) (domain.Item, error) {
+	if strings.TrimSpace(opts.ItemID) == "" {
+		return domain.Item{}, errors.New("item id is required")
+	}
+	if strings.TrimSpace(opts.Summary) == "" {
+		return domain.Item{}, errors.New("summary is required")
+	}
+
+	item, itemDir, err := loadItemForMutation(opts.RepoPath, opts.ItemID)
+	if err != nil {
+		return domain.Item{}, err
+	}
+	if item.Status != domain.StatusBlocked {
+		return domain.Item{}, fmt.Errorf("item %s is not blocked", item.ID)
+	}
+
+	targetStatus := domain.StatusTodo
+	if opts.Status != nil {
+		switch *opts.Status {
+		case domain.StatusBlocked:
+			return domain.Item{}, errors.New("use `aj block <id> ...` to keep an item blocked")
+		case domain.StatusDone:
+			return domain.Item{}, errors.New("use `aj done <id> --summary ...` to complete an item")
+		case domain.StatusCanceled:
+			return domain.Item{}, errors.New("status canceled is not supported yet")
+		default:
+			targetStatus = *opts.Status
+		}
+	}
+
+	item.Status = targetStatus
+	item.Summary = strings.TrimSpace(opts.Summary)
+	if opts.NextAction != nil {
+		item.NextAction = strings.TrimSpace(*opts.NextAction)
+	}
+	if domain.StatusRequiresNextAction(item.Status) && strings.TrimSpace(item.NextAction) == "" {
+		return domain.Item{}, fmt.Errorf("status %s requires a next action", item.Status)
+	}
+
+	item.UpdatedAt = time.Now().UTC().Truncate(time.Second)
+	if err := persistItemMutation(itemDir, item, "unblocked", "system", item.Summary); err != nil {
+		return domain.Item{}, err
+	}
+
+	return item, nil
+}
+
 func TakeItem(opts TakeItemOptions) (domain.Item, error) {
 	if strings.TrimSpace(opts.ItemID) == "" {
 		return domain.Item{}, errors.New("item id is required")
@@ -291,6 +430,90 @@ func ReleaseItem(opts ReleaseItemOptions) (domain.Item, error) {
 	item.Summary = fmt.Sprintf("released by %s", owner)
 
 	if err := persistItemMutation(itemDir, item, "released", owner, item.Summary); err != nil {
+		return domain.Item{}, err
+	}
+	return item, nil
+}
+
+func HandoffItem(opts HandoffItemOptions) (domain.Item, error) {
+	if strings.TrimSpace(opts.ItemID) == "" {
+		return domain.Item{}, errors.New("item id is required")
+	}
+	if strings.TrimSpace(opts.ToAgent) == "" {
+		return domain.Item{}, errors.New("destination agent is required")
+	}
+	if strings.TrimSpace(opts.Summary) == "" {
+		return domain.Item{}, errors.New("summary is required")
+	}
+	if opts.TTL <= 0 {
+		return domain.Item{}, errors.New("ttl must be greater than zero")
+	}
+
+	item, itemDir, err := loadItemForMutation(opts.RepoPath, opts.ItemID)
+	if err != nil {
+		return domain.Item{}, err
+	}
+	if item.Status == domain.StatusDone || item.Status == domain.StatusCanceled {
+		return domain.Item{}, fmt.Errorf("item %s is already complete", item.ID)
+	}
+
+	now := time.Now().UTC().Truncate(time.Second)
+	item.Lease = &domain.Lease{
+		Owner:     strings.TrimSpace(opts.ToAgent),
+		ClaimedAt: now,
+		ExpiresAt: now.Add(opts.TTL).Truncate(time.Second),
+	}
+	item.Summary = strings.TrimSpace(opts.Summary)
+	if opts.NextAction != nil {
+		item.NextAction = strings.TrimSpace(*opts.NextAction)
+	}
+	if domain.StatusRequiresNextAction(item.Status) && strings.TrimSpace(item.NextAction) == "" {
+		return domain.Item{}, fmt.Errorf("status %s requires a next action", item.Status)
+	}
+
+	item.UpdatedAt = now
+	if err := persistItemMutation(itemDir, item, "handoff", "system", item.Summary); err != nil {
+		return domain.Item{}, err
+	}
+	return item, nil
+}
+
+func ReopenItem(opts ReopenItemOptions) (domain.Item, error) {
+	if strings.TrimSpace(opts.ItemID) == "" {
+		return domain.Item{}, errors.New("item id is required")
+	}
+	if strings.TrimSpace(opts.Summary) == "" {
+		return domain.Item{}, errors.New("summary is required")
+	}
+	if strings.TrimSpace(opts.NextAction) == "" {
+		return domain.Item{}, errors.New("next action is required")
+	}
+
+	item, itemDir, err := loadItemForMutation(opts.RepoPath, opts.ItemID)
+	if err != nil {
+		return domain.Item{}, err
+	}
+	if item.Status != domain.StatusDone && item.Status != domain.StatusCanceled {
+		return domain.Item{}, fmt.Errorf("item %s is not done or canceled", item.ID)
+	}
+
+	targetStatus := domain.StatusTodo
+	if opts.Status != nil {
+		switch *opts.Status {
+		case domain.StatusDone:
+			return domain.Item{}, errors.New("use `aj done <id> --summary ...` to complete an item")
+		case domain.StatusCanceled:
+			return domain.Item{}, errors.New("status canceled is not supported yet")
+		default:
+			targetStatus = *opts.Status
+		}
+	}
+
+	item.Status = targetStatus
+	item.Summary = strings.TrimSpace(opts.Summary)
+	item.NextAction = strings.TrimSpace(opts.NextAction)
+	item.UpdatedAt = time.Now().UTC().Truncate(time.Second)
+	if err := persistItemMutation(itemDir, item, "reopened", "system", item.Summary); err != nil {
 		return domain.Item{}, err
 	}
 	return item, nil

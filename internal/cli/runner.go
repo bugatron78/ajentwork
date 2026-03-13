@@ -80,12 +80,20 @@ func (r Runner) run(args []string) (int, error) {
 		return r.runShow(globals, commandArgs)
 	case "update":
 		return r.runUpdate(globals, commandArgs)
+	case "block":
+		return r.runBlock(globals, commandArgs)
+	case "unblock":
+		return r.runUnblock(globals, commandArgs)
 	case "done":
 		return r.runDone(globals, commandArgs)
 	case "take":
 		return r.runTake(globals, commandArgs)
 	case "release":
 		return r.runRelease(globals, commandArgs)
+	case "handoff":
+		return r.runHandoff(globals, commandArgs)
+	case "reopen":
+		return r.runReopen(globals, commandArgs)
 	case "next":
 		return r.runNext(globals, commandArgs)
 	case "inbox":
@@ -539,6 +547,144 @@ func (r Runner) runDone(globals globalOptions, args []string) (int, error) {
 	}
 }
 
+func (r Runner) runBlock(globals globalOptions, args []string) (int, error) {
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			return r.renderCommandHelp("block", globals.format)
+		}
+	}
+	if len(args) == 0 {
+		return 2, errors.New("usage: aj block <id> --summary <summary> [--on <id>] [--next <action>]")
+	}
+
+	itemID := args[0]
+	summary := ""
+	onID := ""
+	var nextAction *string
+
+	for i := 1; i < len(args); i++ {
+		switch args[i] {
+		case "--summary":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --summary")
+			}
+			summary = args[i]
+		case "--on":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --on")
+			}
+			onID = args[i]
+		case "--next":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --next")
+			}
+			value := args[i]
+			nextAction = &value
+		default:
+			return 2, fmt.Errorf("unknown option for block: %s", args[i])
+		}
+	}
+
+	service := app.BlockItemService{}
+	item, err := service.Run(app.BlockItemInput{
+		RepoPath:   globals.repoPath,
+		ItemID:     itemID,
+		Summary:    summary,
+		OnID:       onID,
+		NextAction: nextAction,
+	})
+	if err != nil {
+		return 1, err
+	}
+
+	switch globals.format {
+	case domain.FormatBrief:
+		_, err = fmt.Fprintln(r.stdout, render.ItemBlockedBrief(item))
+		return 0, err
+	case domain.FormatPrompt:
+		_, err = fmt.Fprintln(r.stdout, render.ItemBlockedPrompt(item))
+		return 0, err
+	case domain.FormatJSON:
+		return r.renderJSON(item)
+	default:
+		return 2, fmt.Errorf("unsupported format %q", globals.format)
+	}
+}
+
+func (r Runner) runUnblock(globals globalOptions, args []string) (int, error) {
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			return r.renderCommandHelp("unblock", globals.format)
+		}
+	}
+	if len(args) == 0 {
+		return 2, errors.New("usage: aj unblock <id> --summary <summary> [--next <action>] [--status <status>]")
+	}
+
+	itemID := args[0]
+	summary := ""
+	var nextAction *string
+	var status *domain.Status
+
+	for i := 1; i < len(args); i++ {
+		switch args[i] {
+		case "--summary":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --summary")
+			}
+			summary = args[i]
+		case "--next":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --next")
+			}
+			value := args[i]
+			nextAction = &value
+		case "--status":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --status")
+			}
+			parsed, err := domain.ParseStatus(args[i])
+			if err != nil {
+				return 2, err
+			}
+			status = &parsed
+		default:
+			return 2, fmt.Errorf("unknown option for unblock: %s", args[i])
+		}
+	}
+
+	service := app.UnblockItemService{}
+	item, err := service.Run(app.UnblockItemInput{
+		RepoPath:   globals.repoPath,
+		ItemID:     itemID,
+		Summary:    summary,
+		NextAction: nextAction,
+		Status:     status,
+	})
+	if err != nil {
+		return 1, err
+	}
+
+	switch globals.format {
+	case domain.FormatBrief:
+		_, err = fmt.Fprintln(r.stdout, render.ItemUnblockedBrief(item))
+		return 0, err
+	case domain.FormatPrompt:
+		_, err = fmt.Fprintln(r.stdout, render.ItemUnblockedPrompt(item))
+		return 0, err
+	case domain.FormatJSON:
+		return r.renderJSON(item)
+	default:
+		return 2, fmt.Errorf("unsupported format %q", globals.format)
+	}
+}
+
 func (r Runner) runTake(globals globalOptions, args []string) (int, error) {
 	for _, arg := range args {
 		if arg == "--help" || arg == "-h" {
@@ -630,6 +776,155 @@ func (r Runner) runRelease(globals globalOptions, args []string) (int, error) {
 		return 0, err
 	case domain.FormatPrompt:
 		_, err = fmt.Fprintln(r.stdout, render.ItemReleasedPrompt(item))
+		return 0, err
+	case domain.FormatJSON:
+		return r.renderJSON(item)
+	default:
+		return 2, fmt.Errorf("unsupported format %q", globals.format)
+	}
+}
+
+func (r Runner) runHandoff(globals globalOptions, args []string) (int, error) {
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			return r.renderCommandHelp("handoff", globals.format)
+		}
+	}
+	if len(args) == 0 {
+		return 2, errors.New("usage: aj handoff <id> --to <agent> --summary <summary> [--next <action>] [--ttl 4h]")
+	}
+
+	itemID := args[0]
+	toAgent := ""
+	summary := ""
+	var nextAction *string
+	ttl := 4 * time.Hour
+
+	for i := 1; i < len(args); i++ {
+		switch args[i] {
+		case "--to":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --to")
+			}
+			toAgent = args[i]
+		case "--summary":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --summary")
+			}
+			summary = args[i]
+		case "--next":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --next")
+			}
+			value := args[i]
+			nextAction = &value
+		case "--ttl":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --ttl")
+			}
+			parsed, err := time.ParseDuration(args[i])
+			if err != nil {
+				return 2, fmt.Errorf("invalid ttl %q", args[i])
+			}
+			ttl = parsed
+		default:
+			return 2, fmt.Errorf("unknown option for handoff: %s", args[i])
+		}
+	}
+
+	service := app.HandoffItemService{}
+	item, err := service.Run(app.HandoffItemInput{
+		RepoPath:   globals.repoPath,
+		ItemID:     itemID,
+		ToAgent:    toAgent,
+		Summary:    summary,
+		NextAction: nextAction,
+		TTL:        ttl,
+	})
+	if err != nil {
+		return 1, err
+	}
+
+	switch globals.format {
+	case domain.FormatBrief:
+		_, err = fmt.Fprintln(r.stdout, render.ItemHandedOffBrief(item))
+		return 0, err
+	case domain.FormatPrompt:
+		_, err = fmt.Fprintln(r.stdout, render.ItemHandedOffPrompt(item))
+		return 0, err
+	case domain.FormatJSON:
+		return r.renderJSON(item)
+	default:
+		return 2, fmt.Errorf("unsupported format %q", globals.format)
+	}
+}
+
+func (r Runner) runReopen(globals globalOptions, args []string) (int, error) {
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			return r.renderCommandHelp("reopen", globals.format)
+		}
+	}
+	if len(args) == 0 {
+		return 2, errors.New("usage: aj reopen <id> --summary <summary> --next <action> [--status <status>]")
+	}
+
+	itemID := args[0]
+	summary := ""
+	nextAction := ""
+	var status *domain.Status
+
+	for i := 1; i < len(args); i++ {
+		switch args[i] {
+		case "--summary":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --summary")
+			}
+			summary = args[i]
+		case "--next":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --next")
+			}
+			nextAction = args[i]
+		case "--status":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --status")
+			}
+			parsed, err := domain.ParseStatus(args[i])
+			if err != nil {
+				return 2, err
+			}
+			status = &parsed
+		default:
+			return 2, fmt.Errorf("unknown option for reopen: %s", args[i])
+		}
+	}
+
+	service := app.ReopenItemService{}
+	item, err := service.Run(app.ReopenItemInput{
+		RepoPath:   globals.repoPath,
+		ItemID:     itemID,
+		Summary:    summary,
+		NextAction: nextAction,
+		Status:     status,
+	})
+	if err != nil {
+		return 1, err
+	}
+
+	switch globals.format {
+	case domain.FormatBrief:
+		_, err = fmt.Fprintln(r.stdout, render.ItemReopenedBrief(item))
+		return 0, err
+	case domain.FormatPrompt:
+		_, err = fmt.Fprintln(r.stdout, render.ItemReopenedPrompt(item))
 		return 0, err
 	case domain.FormatJSON:
 		return r.renderJSON(item)

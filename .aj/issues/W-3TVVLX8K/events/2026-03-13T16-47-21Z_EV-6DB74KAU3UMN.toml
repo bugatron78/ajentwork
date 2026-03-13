@@ -1,0 +1,6 @@
+id = "EV-6DB74KAU3UMN"
+item_id = "W-3TVVLX8K"
+type = "done"
+at = "2026-03-13T16:47:21Z"
+actor = "system"
+summary = "block unblock handoff and reopen commands are implemented and tested"

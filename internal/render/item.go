@@ -153,6 +153,42 @@ func ItemDonePrompt(item domain.Item) string {
 	}, "\n")
 }
 
+func ItemBlockedBrief(item domain.Item) string {
+	return fmt.Sprintf("blocked %s %s", item.ID, item.Summary)
+}
+
+func ItemBlockedPrompt(item domain.Item) string {
+	lines := []string{
+		"Status: blocked",
+		"ID: " + item.ID,
+		"Summary: " + item.Summary,
+	}
+	if item.NextAction != "" {
+		lines = append(lines, "Next: "+item.NextAction)
+	}
+	if len(item.DependsOn) > 0 {
+		lines = append(lines, "Depends On: "+strings.Join(item.DependsOn, ", "))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func ItemUnblockedBrief(item domain.Item) string {
+	return fmt.Sprintf("unblocked %s [%s] %s", item.ID, item.Status, item.Summary)
+}
+
+func ItemUnblockedPrompt(item domain.Item) string {
+	lines := []string{
+		"Status: unblocked",
+		"ID: " + item.ID,
+		"State: " + string(item.Status),
+		"Summary: " + item.Summary,
+	}
+	if item.NextAction != "" {
+		lines = append(lines, "Next: "+item.NextAction)
+	}
+	return strings.Join(lines, "\n")
+}
+
 func ItemTakenBrief(item domain.Item) string {
 	return fmt.Sprintf("claimed %s by %s until %s", item.ID, item.Lease.Owner, item.Lease.ExpiresAt.Format("2006-01-02T15:04:05Z"))
 }
@@ -176,6 +212,39 @@ func ItemReleasedPrompt(item domain.Item) string {
 		"ID: " + item.ID,
 		"Summary: " + item.Summary,
 	}, "\n")
+}
+
+func ItemHandedOffBrief(item domain.Item) string {
+	return fmt.Sprintf("handed off %s to %s until %s", item.ID, item.Lease.Owner, item.Lease.ExpiresAt.Format("2006-01-02T15:04:05Z"))
+}
+
+func ItemHandedOffPrompt(item domain.Item) string {
+	lines := []string{
+		"Status: handoff",
+		"ID: " + item.ID,
+		"To: " + item.Lease.Owner,
+		"Expires: " + item.Lease.ExpiresAt.Format("2006-01-02T15:04:05Z"),
+		"Summary: " + item.Summary,
+	}
+	if item.NextAction != "" {
+		lines = append(lines, "Next: "+item.NextAction)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func ItemReopenedBrief(item domain.Item) string {
+	return fmt.Sprintf("reopened %s [%s] %s", item.ID, item.Status, item.Summary)
+}
+
+func ItemReopenedPrompt(item domain.Item) string {
+	lines := []string{
+		"Status: reopened",
+		"ID: " + item.ID,
+		"State: " + string(item.Status),
+		"Summary: " + item.Summary,
+		"Next: " + item.NextAction,
+	}
+	return strings.Join(lines, "\n")
 }
 
 func ItemLinkedBrief(item domain.Item, dependencyID string) string {
