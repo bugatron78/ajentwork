@@ -1,0 +1,6 @@
+id = "EV-S2KD9TJCYRFL"
+item_id = "W-4VAZUCXL"
+type = "done"
+at = "2026-03-13T17:23:02Z"
+actor = "system"
+summary = "jira link and sync now support dry-run previews and conflict-aware resolution"

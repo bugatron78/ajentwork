@@ -294,3 +294,37 @@ func (s ExportJiraIssueService) Run(input ExportJiraIssueInput) (store.ExportJir
 		IssueType:  input.IssueType,
 	})
 }
+
+type LinkJiraIssueInput struct {
+	RepoPath string
+	ItemID   string
+	IssueKey string
+}
+
+type LinkJiraIssueService struct{}
+
+func (s LinkJiraIssueService) Run(input LinkJiraIssueInput) (store.LinkJiraIssueResult, error) {
+	return store.LinkJiraIssue(store.LinkJiraIssueOptions{
+		RepoPath: input.RepoPath,
+		ItemID:   input.ItemID,
+		IssueKey: input.IssueKey,
+	})
+}
+
+type SyncJiraIssueInput struct {
+	RepoPath string
+	ItemID   string
+	DryRun   bool
+	Resolve  string
+}
+
+type SyncJiraIssueService struct{}
+
+func (s SyncJiraIssueService) Run(input SyncJiraIssueInput) (store.SyncJiraIssueResult, error) {
+	return store.SyncJiraIssue(store.SyncJiraIssueOptions{
+		RepoPath: input.RepoPath,
+		ItemID:   input.ItemID,
+		DryRun:   input.DryRun,
+		Resolve:  input.Resolve,
+	})
+}

@@ -60,6 +60,8 @@ The first Jira adapter slice supports:
 
 - `aj jira pull <key>`
 - `aj jira push <id> [--project <key>] [--type <name>]`
+- `aj jira link <id> <key>`
+- `aj jira sync <id> [--dry-run] [--resolve keep-local|keep-remote]`
 - `aj take jira <key> --agent <name>`
 
 Set credentials through environment variables:

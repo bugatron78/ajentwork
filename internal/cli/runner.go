@@ -1289,6 +1289,10 @@ func (r Runner) runJira(globals globalOptions, args []string) (int, error) {
 		return r.runJiraPull(globals, args[1:])
 	case "push":
 		return r.runJiraPush(globals, args[1:])
+	case "link":
+		return r.runJiraLink(globals, args[1:])
+	case "sync":
+		return r.runJiraSync(globals, args[1:])
 	default:
 		return 2, fmt.Errorf("unknown jira subcommand %q\ntry: aj jira --help", args[0])
 	}
@@ -1392,6 +1396,109 @@ func (r Runner) runJiraPush(globals globalOptions, args []string) (int, error) {
 			status = "already linked to Jira"
 		}
 		_, err = fmt.Fprintf(r.stdout, "Status: %s\nID: %s\nJira: %s\n", status, result.Item.ID, result.Item.Jira.Key)
+		return 0, err
+	case domain.FormatJSON:
+		return r.renderJSON(result)
+	default:
+		return 2, fmt.Errorf("unsupported format %q", globals.format)
+	}
+}
+
+func (r Runner) runJiraLink(globals globalOptions, args []string) (int, error) {
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			return r.renderCommandHelp("jira", globals.format)
+		}
+	}
+	if len(args) != 2 {
+		return 2, errors.New("usage: aj jira link <id> <key>")
+	}
+
+	service := app.LinkJiraIssueService{}
+	result, err := service.Run(app.LinkJiraIssueInput{
+		RepoPath: globals.repoPath,
+		ItemID:   args[0],
+		IssueKey: args[1],
+	})
+	if err != nil {
+		return 1, err
+	}
+
+	switch globals.format {
+	case domain.FormatBrief:
+		if result.AlreadyLinked {
+			_, err = fmt.Fprintf(r.stdout, "already linked %s to Jira %s\n", result.Item.ID, result.Item.Jira.Key)
+		} else {
+			_, err = fmt.Fprintf(r.stdout, "linked %s to Jira %s\n", result.Item.ID, result.Item.Jira.Key)
+		}
+		return 0, err
+	case domain.FormatPrompt:
+		status := "linked to Jira"
+		if result.AlreadyLinked {
+			status = "already linked to Jira"
+		}
+		_, err = fmt.Fprintf(r.stdout, "Status: %s\nID: %s\nJira: %s\n", status, result.Item.ID, result.Item.Jira.Key)
+		return 0, err
+	case domain.FormatJSON:
+		return r.renderJSON(result)
+	default:
+		return 2, fmt.Errorf("unsupported format %q", globals.format)
+	}
+}
+
+func (r Runner) runJiraSync(globals globalOptions, args []string) (int, error) {
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			return r.renderCommandHelp("jira", globals.format)
+		}
+	}
+	if len(args) == 0 {
+		return 2, errors.New("usage: aj jira sync <id> [--dry-run] [--resolve keep-local|keep-remote]")
+	}
+
+	itemID := args[0]
+	dryRun := false
+	resolve := ""
+	for i := 1; i < len(args); i++ {
+		switch args[i] {
+		case "--dry-run":
+			dryRun = true
+		case "--resolve":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --resolve")
+			}
+			resolve = args[i]
+		default:
+			return 2, fmt.Errorf("unknown option for jira sync: %s", args[i])
+		}
+	}
+
+	service := app.SyncJiraIssueService{}
+	result, err := service.Run(app.SyncJiraIssueInput{
+		RepoPath: globals.repoPath,
+		ItemID:   itemID,
+		DryRun:   dryRun,
+		Resolve:  resolve,
+	})
+	if err != nil {
+		return 1, err
+	}
+
+	switch globals.format {
+	case domain.FormatBrief:
+		if dryRun {
+			_, err = fmt.Fprintf(r.stdout, "dry-run jira sync %s direction=%s\n", result.Item.ID, result.Direction)
+		} else {
+			_, err = fmt.Fprintf(r.stdout, "synced %s with Jira %s direction=%s\n", result.Item.ID, result.Item.Jira.Key, result.Direction)
+		}
+		return 0, err
+	case domain.FormatPrompt:
+		status := "synced with Jira"
+		if dryRun {
+			status = "dry-run Jira sync"
+		}
+		_, err = fmt.Fprintf(r.stdout, "Status: %s\nID: %s\nJira: %s\nDirection: %s\n", status, result.Item.ID, result.Item.Jira.Key, result.Direction)
 		return 0, err
 	case domain.FormatJSON:
 		return r.renderJSON(result)

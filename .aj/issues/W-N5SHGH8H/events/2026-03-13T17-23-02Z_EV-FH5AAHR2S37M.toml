@@ -1,0 +1,6 @@
+id = "EV-FH5AAHR2S37M"
+item_id = "W-N5SHGH8H"
+type = "updated"
+at = "2026-03-13T17:23:02Z"
+actor = "system"
+summary = "Jira adapter now includes link and sync with dry-run previews and conflict detection"

@@ -114,6 +114,30 @@ type ExportJiraIssueResult struct {
 	AlreadyLinked bool        `json:"already_linked"`
 }
 
+type LinkJiraIssueOptions struct {
+	RepoPath string
+	ItemID   string
+	IssueKey string
+}
+
+type LinkJiraIssueResult struct {
+	Item          domain.Item `json:"item"`
+	AlreadyLinked bool        `json:"already_linked"`
+}
+
+type SyncJiraIssueOptions struct {
+	RepoPath string
+	ItemID   string
+	DryRun   bool
+	Resolve  string
+}
+
+type SyncJiraIssueResult struct {
+	Item      domain.Item `json:"item"`
+	Direction string      `json:"direction"`
+	DryRun    bool        `json:"dry_run"`
+}
+
 type NextItemResult struct {
 	Item      domain.Item `json:"item"`
 	Reason    string      `json:"reason"`
@@ -260,6 +284,7 @@ func UpdateItem(opts UpdateItemOptions) (domain.Item, error) {
 	if domain.StatusRequiresNextAction(item.Status) && strings.TrimSpace(item.NextAction) == "" {
 		return domain.Item{}, fmt.Errorf("status %s requires a next action", item.Status)
 	}
+	markJiraDirtyLocal(&item)
 
 	item.UpdatedAt = time.Now().UTC().Truncate(time.Second)
 	if err := persistItemMutation(itemDir, item, "updated", "system", item.Summary); err != nil {
@@ -286,6 +311,7 @@ func CompleteItem(opts CompleteItemOptions) (domain.Item, error) {
 	item.Summary = strings.TrimSpace(opts.Summary)
 	item.NextAction = ""
 	item.Lease = nil
+	markJiraDirtyLocal(&item)
 	item.UpdatedAt = time.Now().UTC().Truncate(time.Second)
 
 	if err := persistItemMutation(itemDir, item, "done", "system", item.Summary); err != nil {
@@ -345,6 +371,7 @@ func BlockItem(opts BlockItemOptions) (domain.Item, error) {
 	if domain.StatusRequiresNextAction(item.Status) && strings.TrimSpace(item.NextAction) == "" {
 		return domain.Item{}, fmt.Errorf("status %s requires a next action", item.Status)
 	}
+	markJiraDirtyLocal(&item)
 
 	item.UpdatedAt = time.Now().UTC().Truncate(time.Second)
 	if err := persistItemMutation(itemDir, item, "blocked", "system", item.Summary); err != nil {
@@ -392,6 +419,7 @@ func UnblockItem(opts UnblockItemOptions) (domain.Item, error) {
 	if domain.StatusRequiresNextAction(item.Status) && strings.TrimSpace(item.NextAction) == "" {
 		return domain.Item{}, fmt.Errorf("status %s requires a next action", item.Status)
 	}
+	markJiraDirtyLocal(&item)
 
 	item.UpdatedAt = time.Now().UTC().Truncate(time.Second)
 	if err := persistItemMutation(itemDir, item, "unblocked", "system", item.Summary); err != nil {
@@ -495,6 +523,7 @@ func HandoffItem(opts HandoffItemOptions) (domain.Item, error) {
 	if domain.StatusRequiresNextAction(item.Status) && strings.TrimSpace(item.NextAction) == "" {
 		return domain.Item{}, fmt.Errorf("status %s requires a next action", item.Status)
 	}
+	markJiraDirtyLocal(&item)
 
 	item.UpdatedAt = now
 	if err := persistItemMutation(itemDir, item, "handoff", "system", item.Summary); err != nil {
@@ -537,6 +566,7 @@ func ReopenItem(opts ReopenItemOptions) (domain.Item, error) {
 	item.Status = targetStatus
 	item.Summary = strings.TrimSpace(opts.Summary)
 	item.NextAction = strings.TrimSpace(opts.NextAction)
+	markJiraDirtyLocal(&item)
 	item.UpdatedAt = time.Now().UTC().Truncate(time.Second)
 	if err := persistItemMutation(itemDir, item, "reopened", "system", item.Summary); err != nil {
 		return domain.Item{}, err
@@ -676,6 +706,177 @@ func ExportJiraIssue(opts ExportJiraIssueOptions) (ExportJiraIssueResult, error)
 		return ExportJiraIssueResult{}, err
 	}
 	return ExportJiraIssueResult{Item: item}, nil
+}
+
+func LinkJiraIssue(opts LinkJiraIssueOptions) (LinkJiraIssueResult, error) {
+	if strings.TrimSpace(opts.ItemID) == "" {
+		return LinkJiraIssueResult{}, errors.New("item id is required")
+	}
+	if strings.TrimSpace(opts.IssueKey) == "" {
+		return LinkJiraIssueResult{}, errors.New("jira issue key is required")
+	}
+
+	item, itemDir, err := loadItemForMutation(opts.RepoPath, opts.ItemID)
+	if err != nil {
+		return LinkJiraIssueResult{}, err
+	}
+	if item.Jira != nil && strings.EqualFold(item.Jira.Key, strings.TrimSpace(opts.IssueKey)) {
+		return LinkJiraIssueResult{Item: item, AlreadyLinked: true}, nil
+	}
+	if existing, ok, err := findItemByJiraKey(opts.RepoPath, opts.IssueKey); err != nil {
+		return LinkJiraIssueResult{}, err
+	} else if ok && existing.ID != item.ID {
+		return LinkJiraIssueResult{}, fmt.Errorf("jira issue %s is already linked to %s", opts.IssueKey, existing.ID)
+	}
+
+	settings, err := config.ResolveJiraSettings(opts.RepoPath)
+	if err != nil {
+		return LinkJiraIssueResult{}, err
+	}
+	client := jira.Client{
+		BaseURL:    settings.BaseURL,
+		Email:      settings.Email,
+		APIToken:   settings.APIToken,
+		HTTPClient: jira.DefaultHTTPClient,
+	}
+	remoteIssue, err := client.GetIssue(context.Background(), opts.IssueKey)
+	if err != nil {
+		return LinkJiraIssueResult{}, err
+	}
+
+	item.Jira = &domain.JiraLink{
+		Key:               remoteIssue.Key,
+		URL:               remoteIssue.URL,
+		SyncMode:          "bidirectional",
+		SyncState:         "dirty_local",
+		LastRemoteVersion: remoteIssue.Updated,
+	}
+	item.UpdatedAt = time.Now().UTC().Truncate(time.Second)
+	item.Summary = fmt.Sprintf("linked to Jira %s", remoteIssue.Key)
+	if err := persistItemMutation(itemDir, item, "linked_external", "system", item.Summary); err != nil {
+		return LinkJiraIssueResult{}, err
+	}
+	return LinkJiraIssueResult{Item: item}, nil
+}
+
+func SyncJiraIssue(opts SyncJiraIssueOptions) (SyncJiraIssueResult, error) {
+	if strings.TrimSpace(opts.ItemID) == "" {
+		return SyncJiraIssueResult{}, errors.New("item id is required")
+	}
+	if opts.Resolve != "" && opts.Resolve != "keep-local" && opts.Resolve != "keep-remote" {
+		return SyncJiraIssueResult{}, errors.New("resolve must be keep-local or keep-remote")
+	}
+
+	item, itemDir, err := loadItemForMutation(opts.RepoPath, opts.ItemID)
+	if err != nil {
+		return SyncJiraIssueResult{}, err
+	}
+	if item.Jira == nil || strings.TrimSpace(item.Jira.Key) == "" {
+		return SyncJiraIssueResult{}, fmt.Errorf("item %s is not linked to Jira", item.ID)
+	}
+
+	settings, err := config.ResolveJiraSettings(opts.RepoPath)
+	if err != nil {
+		return SyncJiraIssueResult{}, err
+	}
+	client := jira.Client{
+		BaseURL:    settings.BaseURL,
+		Email:      settings.Email,
+		APIToken:   settings.APIToken,
+		HTTPClient: jira.DefaultHTTPClient,
+	}
+	remoteIssue, err := client.GetIssue(context.Background(), item.Jira.Key)
+	if err != nil {
+		return SyncJiraIssueResult{}, err
+	}
+
+	localDirty := jiraLocalDirty(item)
+	remoteDirty := jiraRemoteDirty(item, remoteIssue)
+	direction := "noop"
+
+	switch {
+	case localDirty && remoteDirty && opts.Resolve == "":
+		if !opts.DryRun {
+			item.Jira.SyncState = "conflict"
+			item.UpdatedAt = time.Now().UTC().Truncate(time.Second)
+			if err := persistItemMutationWithEventSummary(itemDir, item, "synced", "system", fmt.Sprintf("jira sync conflict detected for %s", item.Jira.Key)); err != nil {
+				return SyncJiraIssueResult{}, err
+			}
+		}
+		return SyncJiraIssueResult{}, fmt.Errorf("jira sync conflict for %s; rerun with --resolve keep-local or --resolve keep-remote", item.Jira.Key)
+	case localDirty && remoteDirty && opts.Resolve == "keep-local":
+		direction = "push"
+	case localDirty && remoteDirty && opts.Resolve == "keep-remote":
+		direction = "pull"
+	case localDirty:
+		direction = "push"
+	case remoteDirty:
+		direction = "pull"
+	}
+
+	if opts.DryRun {
+		itemCopy := item
+		if itemCopy.Jira != nil {
+			itemCopy.Jira.SyncState = jiraSyncStateForDirection(direction)
+		}
+		return SyncJiraIssueResult{
+			Item:      itemCopy,
+			Direction: direction,
+			DryRun:    true,
+		}, nil
+	}
+
+	switch direction {
+	case "push":
+		if err := client.UpdateIssue(context.Background(), item.Jira.Key, jira.UpdateIssueInput{
+			Summary:     item.Title,
+			Description: jiraDescriptionForItem(item),
+		}); err != nil {
+			return SyncJiraIssueResult{}, err
+		}
+		remoteIssue, err = client.GetIssue(context.Background(), item.Jira.Key)
+		if err != nil {
+			return SyncJiraIssueResult{}, err
+		}
+		now := time.Now().UTC().Truncate(time.Second)
+		item.Jira.SyncState = "clean"
+		item.Jira.LastSyncedAt = &now
+		item.Jira.LastRemoteVersion = remoteIssue.Updated
+		item.Jira.URL = remoteIssue.URL
+		item.UpdatedAt = now
+		if err := persistItemMutationWithEventSummary(itemDir, item, "synced", "system", fmt.Sprintf("synced local changes to Jira %s", item.Jira.Key)); err != nil {
+			return SyncJiraIssueResult{}, err
+		}
+	case "pull":
+		item.Title = defaultJiraTitle(remoteIssue)
+		item.Goal = defaultJiraGoal(remoteIssue)
+		item.Priority = mapJiraPriority(remoteIssue.Priority)
+		item.Status = mapJiraStatus(remoteIssue.Status, settings.StatusMap)
+		item.Jira.SyncState = "clean"
+		now := time.Now().UTC().Truncate(time.Second)
+		item.Jira.LastSyncedAt = &now
+		item.Jira.LastRemoteVersion = remoteIssue.Updated
+		item.Jira.URL = remoteIssue.URL
+		item.UpdatedAt = now
+		if item.NextAction == "" && domain.StatusRequiresNextAction(item.Status) {
+			item.NextAction = importedNextAction(item.Status, item.Jira.Key)
+		}
+		if err := persistItemMutationWithEventSummary(itemDir, item, "synced", "system", fmt.Sprintf("synced Jira %s into local item", item.Jira.Key)); err != nil {
+			return SyncJiraIssueResult{}, err
+		}
+	default:
+		item.Jira.SyncState = "clean"
+		now := time.Now().UTC().Truncate(time.Second)
+		item.Jira.LastSyncedAt = &now
+		item.Jira.LastRemoteVersion = remoteIssue.Updated
+		item.Jira.URL = remoteIssue.URL
+	}
+
+	return SyncJiraIssueResult{
+		Item:      item,
+		Direction: direction,
+		DryRun:    false,
+	}, nil
 }
 
 func ListItems(repoPath string) ([]domain.Item, error) {
@@ -1130,6 +1331,47 @@ func jiraDescriptionForItem(item domain.Item) string {
 	return strings.Join(parts, "\n\n")
 }
 
+func jiraLocalDirty(item domain.Item) bool {
+	if item.Jira == nil {
+		return false
+	}
+	if item.Jira.SyncState == "dirty_local" {
+		return true
+	}
+	if item.Jira.LastSyncedAt == nil {
+		return true
+	}
+	return item.UpdatedAt.After(*item.Jira.LastSyncedAt)
+}
+
+func jiraRemoteDirty(item domain.Item, remoteIssue jira.Issue) bool {
+	if item.Jira == nil {
+		return false
+	}
+	if item.Jira.SyncState == "dirty_remote" {
+		return true
+	}
+	return strings.TrimSpace(item.Jira.LastRemoteVersion) != "" && strings.TrimSpace(item.Jira.LastRemoteVersion) != strings.TrimSpace(remoteIssue.Updated)
+}
+
+func jiraSyncStateForDirection(direction string) string {
+	switch direction {
+	case "push":
+		return "dirty_local"
+	case "pull":
+		return "dirty_remote"
+	default:
+		return "clean"
+	}
+}
+
+func markJiraDirtyLocal(item *domain.Item) {
+	if item == nil || item.Jira == nil {
+		return
+	}
+	item.Jira.SyncState = "dirty_local"
+}
+
 func loadItemForMutation(repoPath, itemID string) (domain.Item, string, error) {
 	ajDir, err := ensureAJRepo(repoPath)
 	if err != nil {
@@ -1406,8 +1648,12 @@ func writeCreatedEvent(eventsDir string, item domain.Item) error {
 }
 
 func persistItemMutation(itemDir string, item domain.Item, eventType, actor, summary string) error {
+	return persistItemMutationWithEventSummary(itemDir, item, eventType, actor, summary)
+}
+
+func persistItemMutationWithEventSummary(itemDir string, item domain.Item, eventType, actor, eventSummary string) error {
 	eventsDir := filepath.Join(itemDir, "events")
-	if err := appendEvent(eventsDir, item.ID, eventType, item.UpdatedAt, actor, summary); err != nil {
+	if err := appendEvent(eventsDir, item.ID, eventType, item.UpdatedAt, actor, eventSummary); err != nil {
 		return err
 	}
 	metaPath := filepath.Join(itemDir, "meta.toml")

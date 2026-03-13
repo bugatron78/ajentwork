@@ -61,6 +61,16 @@ func TestClientGetAndCreateIssue(t *testing.T) {
 				"self": "https://example.atlassian.net/rest/api/3/issue/10001",
 			})
 			return jsonResponse(http.StatusCreated, string(response)), nil
+		case r.Method == http.MethodPut && r.URL.Path == "/rest/api/3/issue/ABC-456":
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode update payload: %v", err)
+			}
+			fields := payload["fields"].(map[string]any)
+			if fields["summary"] != "Updated task" {
+				t.Fatalf("unexpected update summary payload: %#v", fields["summary"])
+			}
+			return jsonResponse(http.StatusNoContent, ""), nil
 		default:
 			return jsonResponse(http.StatusNotFound, "not found"), nil
 		}
@@ -86,6 +96,13 @@ func TestClientGetAndCreateIssue(t *testing.T) {
 	}
 	if created.Key != "ABC-456" {
 		t.Fatalf("unexpected created issue: %#v", created)
+	}
+
+	if err := client.UpdateIssue(context.Background(), "ABC-456", UpdateIssueInput{
+		Summary:     "Updated task",
+		Description: "Updated description",
+	}); err != nil {
+		t.Fatalf("update issue: %v", err)
 	}
 }
 

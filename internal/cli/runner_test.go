@@ -494,6 +494,85 @@ func TestRunnerJiraPullPushAndTake(t *testing.T) {
 	}
 }
 
+func TestRunnerJiraLinkAndSync(t *testing.T) {
+	repo := t.TempDir()
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	runner := NewRunner(stdout, stderr)
+
+	if code := runner.Run([]string{"--repo", repo, "init"}); code != 0 {
+		t.Fatalf("init exit code = %d, stderr = %s", code, stderr.String())
+	}
+
+	oldClient := jira.DefaultHTTPClient
+	defer func() { jira.DefaultHTTPClient = oldClient }()
+
+	remoteUpdated := "2026-03-13T12:00:00.000+0000"
+	jira.DefaultHTTPClient = &http.Client{Transport: runnerRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+		wantAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte("agent@example.com:secret"))
+		if r.Header.Get("Authorization") != wantAuth {
+			return runnerJSONResponse(http.StatusUnauthorized, "unauthorized"), nil
+		}
+		switch {
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/rest/api/3/issue/ABC-123"):
+			payload, _ := json.Marshal(map[string]any{
+				"key":  "ABC-123",
+				"self": "https://example.atlassian.net/rest/api/3/issue/10000",
+				"fields": map[string]any{
+					"summary":   "Linked issue",
+					"issuetype": map[string]any{"name": "Task"},
+					"priority":  map[string]any{"name": "Medium"},
+					"status":    map[string]any{"name": "To Do"},
+					"updated":   remoteUpdated,
+				},
+			})
+			return runnerJSONResponse(http.StatusOK, string(payload)), nil
+		case r.Method == http.MethodPut && r.URL.Path == "/rest/api/3/issue/ABC-123":
+			remoteUpdated = "2026-03-13T13:00:00.000+0000"
+			return runnerJSONResponse(http.StatusNoContent, ""), nil
+		default:
+			return runnerJSONResponse(http.StatusNotFound, "not found"), nil
+		}
+	})}
+
+	writeRunnerJiraTestConfig(t, repo, "https://example.atlassian.net", "ABC")
+	t.Setenv("AJ_JIRA_EMAIL", "agent@example.com")
+	t.Setenv("AJ_JIRA_API_TOKEN", "secret")
+
+	if code := runner.Run([]string{"--repo", repo, "new", "--kind", "task", "--title", "Sync me", "--goal", "Exercise jira link and sync", "--next", "Run jira link"}); code != 0 {
+		t.Fatalf("new exit code = %d, stderr = %s", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "ls", "--format", "json"}); code != 0 {
+		t.Fatalf("ls json exit code = %d, stderr = %s", code, stderr.String())
+	}
+	var items []map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &items); err != nil {
+		t.Fatalf("unmarshal list json: %v", err)
+	}
+	itemID := items[0]["id"].(string)
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "jira", "link", itemID, "ABC-123"}); code != 0 {
+		t.Fatalf("jira link exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "linked "+itemID+" to Jira ABC-123") {
+		t.Fatalf("unexpected jira link output: %s", stdout.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "jira", "sync", itemID, "--dry-run"}); code != 0 {
+		t.Fatalf("jira sync dry-run exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "direction=push") {
+		t.Fatalf("unexpected jira sync dry-run output: %s", stdout.String())
+	}
+}
+
 func writeRunnerJiraTestConfig(t *testing.T, repo, baseURL, project string) {
 	t.Helper()
 	raw := `schema_version = 1

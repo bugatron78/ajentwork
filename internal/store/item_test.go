@@ -682,6 +682,149 @@ func TestImportAndExportJiraIssue(t *testing.T) {
 	}
 }
 
+func TestLinkAndSyncJiraIssue(t *testing.T) {
+	repo := t.TempDir()
+	if _, err := InitRepo(InitOptions{RepoPath: repo}); err != nil {
+		t.Fatalf("init repo: %v", err)
+	}
+
+	oldClient := jira.DefaultHTTPClient
+	defer func() { jira.DefaultHTTPClient = oldClient }()
+
+	remoteUpdated := "2026-03-13T12:00:00.000+0000"
+	remoteSummary := "Linked Jira summary"
+	remoteDescription := "Remote Jira description"
+	jira.DefaultHTTPClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		wantAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte("agent@example.com:secret"))
+		if r.Header.Get("Authorization") != wantAuth {
+			return testJSONResponse(http.StatusUnauthorized, "unauthorized"), nil
+		}
+		switch {
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/rest/api/3/issue/ABC-123"):
+			payload, _ := json.Marshal(map[string]any{
+				"key":  "ABC-123",
+				"self": "https://example.atlassian.net/rest/api/3/issue/10000",
+				"fields": map[string]any{
+					"summary": remoteSummary,
+					"description": map[string]any{
+						"type":    "doc",
+						"version": 1,
+						"content": []any{
+							map[string]any{
+								"type": "paragraph",
+								"content": []any{
+									map[string]any{"type": "text", "text": remoteDescription},
+								},
+							},
+						},
+					},
+					"issuetype": map[string]any{"name": "Task"},
+					"priority":  map[string]any{"name": "Medium"},
+					"status":    map[string]any{"name": "To Do"},
+					"updated":   remoteUpdated,
+				},
+			})
+			return testJSONResponse(http.StatusOK, string(payload)), nil
+		case r.Method == http.MethodPut && r.URL.Path == "/rest/api/3/issue/ABC-123":
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode sync payload: %v", err)
+			}
+			fields := payload["fields"].(map[string]any)
+			if fields["summary"] != "Local linked item" {
+				t.Fatalf("unexpected synced summary: %#v", fields["summary"])
+			}
+			remoteUpdated = "2026-03-13T13:00:00.000+0000"
+			return testJSONResponse(http.StatusNoContent, ""), nil
+		default:
+			return testJSONResponse(http.StatusNotFound, "not found"), nil
+		}
+	})}
+
+	writeJiraTestConfig(t, repo, "https://example.atlassian.net", "ABC")
+	t.Setenv("AJ_JIRA_EMAIL", "agent@example.com")
+	t.Setenv("AJ_JIRA_API_TOKEN", "secret")
+
+	item, err := CreateItem(CreateItemOptions{
+		RepoPath:   repo,
+		Kind:       domain.KindTask,
+		Title:      "Local linked item",
+		Goal:       "Sync local work with Jira",
+		NextAction: "Link to Jira",
+		Priority:   1,
+	})
+	if err != nil {
+		t.Fatalf("create item: %v", err)
+	}
+
+	linked, err := LinkJiraIssue(LinkJiraIssueOptions{
+		RepoPath: repo,
+		ItemID:   item.ID,
+		IssueKey: "ABC-123",
+	})
+	if err != nil {
+		t.Fatalf("link jira issue: %v", err)
+	}
+	if linked.Item.Jira == nil || linked.Item.Jira.SyncState != "dirty_local" {
+		t.Fatalf("expected dirty_local linked jira metadata, got %#v", linked.Item.Jira)
+	}
+
+	dryRun, err := SyncJiraIssue(SyncJiraIssueOptions{
+		RepoPath: repo,
+		ItemID:   item.ID,
+		DryRun:   true,
+	})
+	if err != nil {
+		t.Fatalf("dry-run sync: %v", err)
+	}
+	if dryRun.Direction != "push" {
+		t.Fatalf("expected dry-run push direction, got %q", dryRun.Direction)
+	}
+
+	synced, err := SyncJiraIssue(SyncJiraIssueOptions{
+		RepoPath: repo,
+		ItemID:   item.ID,
+	})
+	if err != nil {
+		t.Fatalf("sync item: %v", err)
+	}
+	if synced.Direction != "push" || synced.Item.Jira.SyncState != "clean" {
+		t.Fatalf("unexpected sync result: %#v", synced)
+	}
+
+	remoteSummary = "Remote changed summary"
+	remoteDescription = "Remote changed description"
+	remoteUpdated = "2026-03-13T14:00:00.000+0000"
+	next := "Local follow-up"
+	if _, err := UpdateItem(UpdateItemOptions{
+		RepoPath:   repo,
+		ItemID:     item.ID,
+		Summary:    "local change after sync",
+		NextAction: &next,
+	}); err != nil {
+		t.Fatalf("update local item: %v", err)
+	}
+
+	if _, err := SyncJiraIssue(SyncJiraIssueOptions{
+		RepoPath: repo,
+		ItemID:   item.ID,
+	}); err == nil {
+		t.Fatalf("expected conflict without resolution")
+	}
+
+	resolved, err := SyncJiraIssue(SyncJiraIssueOptions{
+		RepoPath: repo,
+		ItemID:   item.ID,
+		Resolve:  "keep-remote",
+	})
+	if err != nil {
+		t.Fatalf("resolve keep-remote sync: %v", err)
+	}
+	if resolved.Direction != "pull" || resolved.Item.Title != "Remote changed summary" {
+		t.Fatalf("unexpected resolved sync result: %#v", resolved)
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (fn roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {

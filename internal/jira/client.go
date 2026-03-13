@@ -39,6 +39,11 @@ type CreateIssueInput struct {
 	Description string
 }
 
+type UpdateIssueInput struct {
+	Summary     string
+	Description string
+}
+
 func (c Client) GetIssue(ctx context.Context, issueKey string) (Issue, error) {
 	path := fmt.Sprintf("/rest/api/3/issue/%s?fields=summary,description,issuetype,priority,status,updated", url.PathEscape(strings.TrimSpace(issueKey)))
 	var payload struct {
@@ -111,6 +116,20 @@ func (c Client) CreateIssue(ctx context.Context, input CreateIssueInput) (Issue,
 		Description: strings.TrimSpace(input.Description),
 		IssueType:   strings.TrimSpace(input.IssueType),
 	}, nil
+}
+
+func (c Client) UpdateIssue(ctx context.Context, issueKey string, input UpdateIssueInput) error {
+	body := map[string]any{
+		"fields": map[string]any{
+			"summary": input.Summary,
+		},
+	}
+	if strings.TrimSpace(input.Description) != "" {
+		body["fields"].(map[string]any)["description"] = adfDocument(input.Description)
+	}
+
+	path := fmt.Sprintf("/rest/api/3/issue/%s", url.PathEscape(strings.TrimSpace(issueKey)))
+	return c.doJSON(ctx, http.MethodPut, path, body, nil)
 }
 
 func (c Client) doJSON(ctx context.Context, method, path string, body any, out any) error {
