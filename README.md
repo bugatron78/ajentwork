@@ -34,7 +34,7 @@ The installer downloads the matching release artifact and verifies its SHA-256 c
 Install a specific version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/bugatron78/ajentwork/main/scripts/install.sh | bash -s -- --version v0.1.2
+curl -fsSL https://raw.githubusercontent.com/bugatron78/ajentwork/main/scripts/install.sh | bash -s -- --version v0.1.3
 ```
 
 Install to a custom directory:
@@ -127,7 +127,7 @@ Build shareable binaries for macOS and Linux:
 Or build for a specific version label:
 
 ```bash
-./scripts/build-release.sh v0.1.2
+./scripts/build-release.sh v0.1.3
 ```
 
 Artifacts are written to `dist/`:
