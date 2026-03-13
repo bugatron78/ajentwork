@@ -177,16 +177,16 @@ func ResolveJiraSettings(repoPath string) (JiraSettings, error) {
 	}
 
 	if !settings.Enabled {
-		return JiraSettings{}, errors.New("jira is not enabled; set [jira].enabled = true in .aj/config.toml or AJ_JIRA_ENABLED=true")
+		return JiraSettings{}, errors.New(jiraDisabledMessage(repoPath, settings))
 	}
 	if settings.BaseURL == "" {
-		return JiraSettings{}, errors.New("jira base URL is required; set [jira].base_url in .aj/config.toml or AJ_JIRA_BASE_URL")
+		return JiraSettings{}, errors.New(jiraBaseURLMessage(repoPath))
 	}
 	if settings.Email == "" {
-		return JiraSettings{}, errors.New("jira email is required; set AJ_JIRA_EMAIL")
+		return JiraSettings{}, errors.New(jiraCredentialsMessage("AJ_JIRA_EMAIL"))
 	}
 	if settings.APIToken == "" {
-		return JiraSettings{}, errors.New("jira API token is required; set AJ_JIRA_API_TOKEN")
+		return JiraSettings{}, errors.New(jiraCredentialsMessage("AJ_JIRA_API_TOKEN"))
 	}
 	return settings, nil
 }
@@ -197,4 +197,46 @@ func parseQuoted(value string) (string, error) {
 		return "", err
 	}
 	return unquoted, nil
+}
+
+func jiraDisabledMessage(repoPath string, settings JiraSettings) string {
+	configPath := filepath.Join(filepath.Clean(repoPath), ".aj", "config.toml")
+	baseURL := settings.BaseURL
+	if baseURL == "" {
+		baseURL = "https://your-domain.atlassian.net"
+	}
+	project := settings.Project
+	if project == "" {
+		project = "ABC"
+	}
+	return strings.Join([]string{
+		"jira is not enabled for this repo.",
+		fmt.Sprintf("Add this to %s:", configPath),
+		"[jira]",
+		`enabled = true`,
+		fmt.Sprintf(`base_url = %q`, baseURL),
+		fmt.Sprintf(`project = %q`, project),
+		"Or set AJ_JIRA_ENABLED=true temporarily.",
+		"See: aj help jira",
+	}, "\n")
+}
+
+func jiraBaseURLMessage(repoPath string) string {
+	configPath := filepath.Join(filepath.Clean(repoPath), ".aj", "config.toml")
+	return strings.Join([]string{
+		"jira base URL is required.",
+		fmt.Sprintf("Set [jira].base_url in %s or set AJ_JIRA_BASE_URL.", configPath),
+		`Example: base_url = "https://your-domain.atlassian.net"`,
+		"See: aj help jira",
+	}, "\n")
+}
+
+func jiraCredentialsMessage(missing string) string {
+	return strings.Join([]string{
+		fmt.Sprintf("jira credential %s is required.", missing),
+		"Set both AJ_JIRA_EMAIL and AJ_JIRA_API_TOKEN in your shell environment.",
+		`Example: export AJ_JIRA_EMAIL="you@example.com"`,
+		`Example: export AJ_JIRA_API_TOKEN="..."`,
+		"See: aj help jira",
+	}, "\n")
 }
