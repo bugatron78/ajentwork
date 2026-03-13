@@ -9,6 +9,7 @@ class Aj < Formula
 
   def install
     system "go", "build", *std_go_args(ldflags: "-s -w"), "./cmd/aj"
+    man1.install "docs/aj.1"
   end
 
   test do

@@ -1,0 +1,481 @@
+.TH AJ 1 "2026-03-13" "ajentwork" "Agent Work Tracker" "User Commands"
+.SH NAME
+aj \- agent work tracker with optional Jira sync
+.SH SYNOPSIS
+.B aj
+<command> [options]
+.SH DESCRIPTION
+Track agent work locally in a compact, git\-friendly format with built\-in help, workflows, and optional Jira interoperability.
+The primary interactive help surfaces remain `aj \-\-help`, `aj help <command>`, `aj workflows`, and `aj examples`. This man page is a generated offline companion.
+.SH COMMANDS
+.SS BLOCK
+.B aj block <id> \-\-summary <summary> [\-\-on <id>] [\-\-next <action>] [\-\-jira\-comment|\-\-no\-jira\-comment]
+Move a local work item into blocked status and optionally attach a dependency that explains what must finish first.
+.RS
+.TP
+.B \-\-summary <summary>
+required one\-line blocker summary
+.TP
+.B \-\-on <id>
+optional dependency item identifier to attach and wait on
+.TP
+.B \-\-next <action>
+optional replacement next action; defaults to waiting on the dependency when \-\-on is used
+.TP
+.B \-\-jira\-comment
+post the same summary to the linked Jira issue after blocking
+.TP
+.B \-\-no\-jira\-comment
+suppress Jira milestone comment even if the repo policy enables it
+.RE
+.SS CHANGES
+.B aj changes [\-\-item <id>] [\-\-since <rfc3339>] [\-\-limit <n>]
+List compact recent changes from the append\-only event log so agents can understand what happened without inspecting each item manually.
+.RS
+.TP
+.B \-\-item <id>
+optional work item identifier to limit the feed to one item
+.TP
+.B \-\-since <rfc3339>
+optional lower time bound for returned events
+.TP
+.B \-\-limit <n>
+optional max number of events to return; default 20
+.RE
+.SS DONE
+.B aj done <id> \-\-summary <summary> [\-\-jira\-comment|\-\-no\-jira\-comment]
+Mark a local work item done, record its completion summary, and clear its next action.
+.RS
+.TP
+.B \-\-summary <summary>
+required one\-line completion summary
+.TP
+.B \-\-jira\-comment
+post the same summary to the linked Jira issue after completion
+.TP
+.B \-\-no\-jira\-comment
+suppress Jira milestone comment even if the repo policy enables it
+.RE
+.SS HANDOFF
+.B aj handoff <id> \-\-to <agent> \-\-summary <summary> [\-\-next <action>] [\-\-ttl 4h] [\-\-jira\-comment|\-\-no\-jira\-comment]
+Assign a new lease owner with a handoff summary so another agent can continue the work without ambiguity.
+.RS
+.TP
+.B \-\-to <agent>
+required destination agent name
+.TP
+.B \-\-summary <summary>
+required compact handoff summary
+.TP
+.B \-\-next <action>
+optional replacement next action for the receiving agent
+.TP
+.B \-\-ttl <duration>
+optional lease duration such as 30m or 4h; default 4h
+.TP
+.B \-\-jira\-comment
+post the same summary to the linked Jira issue after handoff
+.TP
+.B \-\-no\-jira\-comment
+suppress Jira milestone comment even if the repo policy enables it
+.RE
+.SS INBOX
+.B aj inbox [\-\-agent <name>]
+Show a compact queue of owned, stale, waiting, and available work items so an agent can decide what to act on next.
+.RS
+.TP
+.B \-\-agent <name>
+optional agent name; if provided, owned items for that agent are highlighted
+.RE
+.SS INIT
+.B aj init [\-\-repo <path>] [\-\-force]
+Bootstrap a repository for aj by creating the .aj directory tree, default config, cache directory, and artifact directories.
+.RS
+.TP
+.B \-\-repo <path>
+initialize aj in a specific repository path instead of the current working directory
+.TP
+.B \-\-force
+overwrite an existing config file if present
+.TP
+.B \-\-format brief|json|prompt
+render the result in the requested output format
+.RE
+.SS LINK
+.B aj link <id> \-\-depends\-on <id>
+Record a dependency edge so aj can understand that an item is waiting for another item to be completed before it is ready.
+.RS
+.TP
+.B \-\-depends\-on <id>
+required dependency item identifier
+.RE
+.SS LS
+.B aj ls
+List compact local work item summaries sorted by priority and recency.
+.SS NEW
+.B aj new \-\-kind <kind> \-\-title <title> \-\-goal <goal> \-\-next <action> [\-\-priority 2]
+Create a new local aj work item with a compact snapshot and an initial created event.
+.RS
+.TP
+.B \-\-kind <kind>
+required item kind: bug, feature, task, spike, or epic
+.TP
+.B \-\-title <title>
+required short work item title
+.TP
+.B \-\-goal <goal>
+required problem statement or desired outcome
+.TP
+.B \-\-next <action>
+required immediate next action for the agent
+.TP
+.B \-\-priority <0\-4>
+priority where 0 is highest and 4 is lowest; default 2
+.RE
+.SS NEXT
+.B aj next [\-\-agent <name>]
+Recommend the most relevant next item, preferring work already leased to the given agent and otherwise falling back to the highest\-priority available item.
+.RS
+.TP
+.B \-\-agent <name>
+optional agent name; if provided, owned work is recommended first
+.RE
+.SS READY
+.B aj ready [\-\-agent <name>]
+Show actionable items whose dependencies are satisfied and whose lease state does not block the current agent.
+.RS
+.TP
+.B \-\-agent <name>
+optional agent name; owned items for that agent are included and prioritized
+.RE
+.SS RELEASE
+.B aj release <id>
+Remove the current lease from a local work item so another agent can claim it.
+.SS REOPEN
+.B aj reopen <id> \-\-summary <summary> \-\-next <action> [\-\-status <status>]
+Move a done item back into active work when follow\-up or regression handling is needed.
+.RS
+.TP
+.B \-\-summary <summary>
+required one\-line reopen summary
+.TP
+.B \-\-next <action>
+required next action after reopening
+.TP
+.B \-\-status <status>
+optional replacement status after reopening; default todo
+.RE
+.SS SHOW
+.B aj show <id> [\-\-history] [\-\-limit <n>]
+Show the compact current snapshot for a single local work item, with optional recent event history.
+.RS
+.TP
+.B \-\-history
+append recent event history after the current snapshot
+.TP
+.B \-\-limit <n>
+optional max number of history events to show when \-\-history is used; default 5
+.RE
+.SS TAKE
+.B aj take <id> \-\-agent <name> [\-\-ttl 4h] [\-\-force]
+Attach a temporary lease to a local work item so agents can coordinate ownership and avoid duplicate effort.
+.RS
+.TP
+.B \-\-agent <name>
+required agent name to assign to the lease
+.TP
+.B \-\-ttl <duration>
+optional lease duration such as 30m or 4h; default 4h
+.TP
+.B \-\-force
+override a currently active lease
+.RE
+.SS UNBLOCK
+.B aj unblock <id> \-\-summary <summary> [\-\-next <action>] [\-\-status <status>]
+Move a blocked item back into active work, usually after a dependency is resolved or external blocker is removed.
+.RS
+.TP
+.B \-\-summary <summary>
+required one\-line unblock summary
+.TP
+.B \-\-next <action>
+optional replacement next action
+.TP
+.B \-\-status <status>
+optional replacement status after unblocking; default todo
+.RE
+.SS UPDATE
+.B aj update <id> \-\-summary <summary> [\-\-next <action>] [\-\-status <status>]
+Update a local work item summary and optionally change its next action or active status.
+.RS
+.TP
+.B \-\-summary <summary>
+required one\-line progress summary
+.TP
+.B \-\-next <action>
+optional replacement next action
+.TP
+.B \-\-status <status>
+optional replacement status: todo, in_progress, blocked, or in_review
+.RE
+.SS COMMANDS
+.B aj commands [\-\-format brief|json|prompt]
+Show the main aj command surface in a compact format so agents can quickly discover the next command to inspect.
+.SS EXAMPLES
+.B aj examples [topic] [\-\-format brief|json|prompt]
+Provide short example commands for the most common aj tasks and workflows.
+.SS GLOSSARY
+.B aj glossary [term] [\-\-format brief|json|prompt]
+Explain stable terminology such as lease, sync_state, conflict, and artifact so agents do not have to infer meaning from context.
+.SS HELP
+.B aj help [topic] [\-\-format brief|json|prompt]
+Render top\-level help, per\-command help, or topic help for workflows, examples, and glossary entries.
+.SS WORKFLOWS
+.B aj workflows [topic] [\-\-format brief|json|prompt]
+Describe common aj sequences such as initializing a repo, claiming Jira work, or handling blockers.
+.SS JIRA
+.B aj jira <pull|push|link|unlink|status\-map|transitions|sync|comment> ...
+Use the Jira adapter to pull Jira issues into local aj items, push local items to Jira, link or unlink local items, inspect status mappings and transitions, sync linked items with conflict detection, and send compact milestone comments back to Jira.
+.RS
+.TP
+.B pull <key>
+import a Jira issue into aj unless it is already linked
+.TP
+.B push <id>
+create a Jira issue from a local aj item unless it is already linked
+.TP
+.B link <id> <key> [\-\-replace]
+attach an existing local item to an existing Jira issue; require \-\-replace to swap an existing link
+.TP
+.B unlink <id> [\-\-force]
+remove the local Jira link; require \-\-force if the item has unsynced Jira state
+.TP
+.B status\-map
+show the configured Jira\-to\-aj status mapping from .aj/config.toml
+.TP
+.B transitions <id>
+inspect the live remote status and available Jira transitions for a linked item
+.TP
+.B sync <id>
+sync a linked local item with Jira; use \-\-dry\-run to preview direction and Jira status transitions
+.TP
+.B comment <id> \-\-summary <summary>
+post a compact milestone comment to the linked Jira issue
+.TP
+.B env: AJ_JIRA_EMAIL
+email used for Jira Cloud basic auth
+.TP
+.B env: AJ_JIRA_API_TOKEN
+API token used for Jira Cloud basic auth
+.RE
+.SH WORKFLOWS
+.SS BLOCKED
+record and communicate blocked work
+.IP \[bu] 2
+1. Use `aj block <id> \-\-on <dependency> \-\-summary "..."` when work cannot proceed.
+.IP \[bu] 2
+2. Add `\-\-next "..."` when the recovery step should be explicit instead of just waiting.
+.IP \[bu] 2
+3. Use `aj unblock <id> \-\-summary "..." \-\-status in_progress \-\-next "..."` when the blocker is cleared.
+.SS CLAIM
+claim and release work so agents do not overlap
+.IP \[bu] 2
+1. Use `aj take <id> \-\-agent coder\-1` before starting work.
+.IP \[bu] 2
+2. Use `aj show <id>` to confirm the lease and expiry.
+.IP \[bu] 2
+3. Use `aj release <id>` if you are handing the work back without finishing it.
+.SS CORE
+create and bootstrap a local aj repository
+.IP \[bu] 2
+1. Run `aj init` in the repository root.
+.IP \[bu] 2
+2. Run `aj new \-\-kind task \-\-title "..." \-\-goal "..." \-\-next "..."` to create the first item.
+.IP \[bu] 2
+3. Use `aj ls` to inspect the local queue.
+.IP \[bu] 2
+4. Use `aj show <id>` before updating or handing work off.
+.SS DEPENDENCIES
+declare dependency edges so waiting work is not recommended too early
+.IP \[bu] 2
+1. Use `aj link <id> \-\-depends\-on <dependency>` when work cannot start until another item is done.
+.IP \[bu] 2
+2. Use `aj show <id>` to confirm the dependency is recorded.
+.IP \[bu] 2
+3. Use `aj inbox \-\-agent coder\-1` or `aj next \-\-agent coder\-1` and let aj mark dependent work as waiting.
+.SS HANDOFF
+transfer ownership without losing context
+.IP \[bu] 2
+1. Use `aj show <id>` before handing work off so the current snapshot is accurate.
+.IP \[bu] 2
+2. Use `aj handoff <id> \-\-to reviewer\-1 \-\-summary "..." \-\-next "..."` to transfer the lease.
+.IP \[bu] 2
+3. Use `aj inbox \-\-agent reviewer\-1` or `aj next \-\-agent reviewer\-1` so the receiving agent can pick it up immediately.
+.SS HISTORY
+inspect recent activity without scanning every item
+.IP \[bu] 2
+1. Use `aj changes` to see the latest repo\-wide events.
+.IP \[bu] 2
+2. Use `aj changes \-\-item <id>` when you only care about one item's activity.
+.IP \[bu] 2
+3. Use `aj show <id>` after reading changes if you need the current snapshot too.
+.SS JIRA
+import and claim human\-created Jira work
+.IP \[bu] 2
+1. Set `AJ_JIRA_EMAIL` and `AJ_JIRA_API_TOKEN`, and enable Jira in `.aj/config.toml`.
+.IP \[bu] 2
+2. Run `aj take jira ABC\-123 \-\-agent coder\-1` to import and claim human\-created work.
+.IP \[bu] 2
+3. Use `aj show <id>` to inspect the normalized local item.
+.IP \[bu] 2
+4. Use `aj jira status\-map` and `aj jira transitions <id>` to inspect the workflow before syncing.
+.IP \[bu] 2
+5. Use `aj update <id> \-\-summary ... \-\-next ...` to record progress, `aj jira comment <id> \-\-summary "ready for review"` for milestone updates, or `aj jira sync <id> \-\-dry\-run` to preview sync direction and status transitions.
+.IP \[bu] 2
+6. Use `aj jira unlink <id>` before relinking to a different Jira issue, or `aj jira link <id> <key> \-\-replace` when that swap is intentional.
+.SS PROGRESS
+record progress while keeping next steps explicit
+.IP \[bu] 2
+1. Use `aj update <id> \-\-summary "..." \-\-status in_progress \-\-next "..."` as work starts.
+.IP \[bu] 2
+2. Use `aj show <id>` to confirm the compact snapshot still reflects reality.
+.IP \[bu] 2
+3. Use `aj done <id> \-\-summary "..."` when the item is complete.
+.SS QUEUE
+find the next best item without scanning the whole backlog
+.IP \[bu] 2
+1. Use `aj inbox \-\-agent coder\-1` to see owned, stale, waiting, and available work.
+.IP \[bu] 2
+2. Use `aj next \-\-agent coder\-1` to get one recommended item and reason.
+.IP \[bu] 2
+3. Use `aj take <id> \-\-agent coder\-1` if the recommended item is available and you want to claim it.
+.SS READY
+see only work that can actually start right now
+.IP \[bu] 2
+1. Use `aj ready` to list actionable items whose dependencies are already satisfied.
+.IP \[bu] 2
+2. Use `aj ready \-\-agent coder\-1` to include and prioritize work you already own.
+.IP \[bu] 2
+3. Use `aj take <id> \-\-agent coder\-1` to claim a ready item if it is still available.
+.SH EXAMPLES
+.SS BLOCKED
+.IP \[bu] 2
+Block on a dependency: aj block W\-8F3K2P1Q \-\-on W\-2M9A1C7L \-\-summary "waiting on schema decision"
+.IP \[bu] 2
+Unblock and resume: aj unblock W\-8F3K2P1Q \-\-summary "schema approved" \-\-status in_progress \-\-next "finish cache updates"
+.SS CLAIM
+.IP \[bu] 2
+Claim work: aj take W\-8F3K2P1Q \-\-agent coder\-1 \-\-ttl 4h
+.IP \[bu] 2
+Release work: aj release W\-8F3K2P1Q
+.IP \[bu] 2
+Hand off work: aj handoff W\-8F3K2P1Q \-\-to reviewer\-1 \-\-summary "implementation ready" \-\-next "review CLI output"
+.SS DEPENDENCIES
+.IP \[bu] 2
+Record a dependency: aj link W\-CHILD \-\-depends\-on W\-PARENT
+.IP \[bu] 2
+Inspect waiting work: aj inbox \-\-agent coder\-1
+.SS HISTORY
+.IP \[bu] 2
+Show repo changes: aj changes \-\-limit 10
+.IP \[bu] 2
+Show item changes: aj changes \-\-item W\-8F3K2P1Q
+.SS INIT
+.IP \[bu] 2
+Initialize current repository: aj init
+.IP \[bu] 2
+Initialize a repo from another working directory: aj \-\-repo /workspace/project init
+.SS JIRA
+.IP \[bu] 2
+Import and claim Jira work: aj take jira ABC\-123 \-\-agent coder\-1
+.IP \[bu] 2
+Import a Jira issue: aj jira pull ABC\-123
+.IP \[bu] 2
+Push a local item to Jira: aj jira push W\-8F3K2P1Q \-\-project ABC \-\-type Task
+.IP \[bu] 2
+Link a local item to Jira: aj jira link W\-8F3K2P1Q ABC\-123
+.IP \[bu] 2
+Unlink a local Jira item: aj jira unlink W\-8F3K2P1Q
+.IP \[bu] 2
+Show configured Jira mapping: aj jira status\-map
+.IP \[bu] 2
+Show live Jira transitions: aj jira transitions W\-8F3K2P1Q
+.IP \[bu] 2
+Preview linked sync: aj jira sync W\-8F3K2P1Q \-\-dry\-run
+.IP \[bu] 2
+Post a Jira milestone comment: aj jira comment W\-8F3K2P1Q \-\-summary "ready for review"
+.SS NEW
+.IP \[bu] 2
+Create a task: aj new \-\-kind task \-\-title "Bootstrap CLI" \-\-goal "ship the first command set" \-\-next "implement item storage"
+.IP \[bu] 2
+Create a bug: aj new \-\-kind bug \-\-title "Fix cache invalidation" \-\-goal "restore update path invalidation" \-\-next "inspect update handler" \-\-priority 1
+.SS PROGRESS
+.IP \[bu] 2
+Update a task: aj update W\-8F3K2P1Q \-\-summary "started implementation" \-\-status in_progress \-\-next "write tests"
+.IP \[bu] 2
+Complete a task: aj done W\-8F3K2P1Q \-\-summary "tests added and command shipped"
+.IP \[bu] 2
+Reopen completed work: aj reopen W\-8F3K2P1Q \-\-summary "regression reproduced" \-\-next "add a failing test"
+.SS QUEUE
+.IP \[bu] 2
+Find one next item: aj next \-\-agent coder\-1
+.IP \[bu] 2
+Show the current inbox: aj inbox \-\-agent coder\-1
+.SS READY
+.IP \[bu] 2
+Show ready work: aj ready
+.IP \[bu] 2
+Show ready work for an agent: aj ready \-\-agent coder\-1
+.SH CONFIGURATION
+aj stores repo\-local configuration in .aj/config.toml. Common Jira settings include [jira], [jira.status_map], and [jira.lifecycle].
+.nf
+schema_version = 1
+default_output = "brief"
+default_lease_ttl = "4h"
+
+[jira]
+enabled = true
+base_url = "https://example.atlassian.net"
+project = "ABC"
+
+[jira.lifecycle]
+comment_on_done = false
+comment_on_block = false
+comment_on_handoff = false
+.fi
+.SH ENVIRONMENT
+.IP \[bu] 2
+AJ_JIRA_EMAIL \- Jira Cloud email used for authenticated Jira commands.
+.IP \[bu] 2
+AJ_JIRA_API_TOKEN \- Jira Cloud API token used for authenticated Jira commands.
+.IP \[bu] 2
+AJ_JIRA_ENABLED \- optional override for [jira].enabled.
+.IP \[bu] 2
+AJ_JIRA_BASE_URL \- optional override for [jira].base_url.
+.IP \[bu] 2
+AJ_JIRA_PROJECT \- optional override for [jira].project.
+.SH GLOSSARY
+.TP
+.B artifact
+A file reference for logs, long notes, or generated output that is too large to keep in the compact item snapshot.
+.TP
+.B conflict
+A sync state where both the local item and the remote Jira issue changed after the last successful sync and explicit resolution is required.
+.TP
+.B lease
+A temporary claim on a work item that shows which agent is actively working it and when that claim expires.
+.TP
+.B sync_state
+The current local\-versus\-remote Jira sync status: clean, dirty_local, dirty_remote, or conflict.
+.TP
+.B work item
+The compact local unit of work tracked by aj, including its current snapshot and append\-only event history.
+.SH FILES
+.IP \[bu] 2
+\&.aj/config.toml \- repo\-local aj configuration.
+.IP \[bu] 2
+\&.aj/issues/ \- compact work item snapshots and append\-only events.
+.IP \[bu] 2
+\&.aj/artifacts/ \- large logs or supporting outputs referenced by items.
+.SH SEE ALSO
+aj \-\-help, aj examples, aj glossary, aj help jira, aj workflows

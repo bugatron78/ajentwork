@@ -1,0 +1,6 @@
+id = "EV-XHB5GUK6FCCE"
+item_id = "W-KFDXSH7K"
+type = "done"
+at = "2026-03-13T18:52:08Z"
+actor = "system"
+summary = "man page generation, packaging, and install paths are wired"

@@ -15,6 +15,12 @@
 go build ./cmd/aj
 ```
 
+Generate the man page:
+
+```bash
+go run ./cmd/ajgenman --output docs/aj.1
+```
+
 ## Quick Install
 
 Install the latest release binary:
@@ -37,6 +43,14 @@ Install to a custom directory:
 curl -fsSL https://raw.githubusercontent.com/bugatron78/ajentwork/main/scripts/install.sh | bash -s -- --install-dir "$HOME/.local/bin"
 ```
 
+Install without the man page:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/bugatron78/ajentwork/main/scripts/install.sh | bash -s -- --no-man
+```
+
+By default, the installer also places `aj.1` in `$HOME/.local/share/man/man1`.
+
 ## Homebrew
 
 One-shot install without pre-tapping:
@@ -53,6 +67,7 @@ brew install aj
 ```
 
 The published tap lives at `bugatron78/homebrew-ajentwork`, and the formula builds `aj` from source with Go.
+It also installs the `aj(1)` man page, so `man aj` works after a Homebrew install.
 
 ## Jira Adapter
 
@@ -125,7 +140,8 @@ Artifacts are written to `dist/`:
 
 1. Extract the archive for your platform.
 2. Move `aj` onto your `PATH`.
-3. Run `aj --help`.
+3. Optionally copy `share/man/man1/aj.1` into your preferred man directory.
+4. Run `aj --help` or `man ./share/man/man1/aj.1`.
 
 ## Releases
 

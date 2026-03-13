@@ -21,18 +21,28 @@ TARGETS=(
   "linux arm64"
 )
 
+MANPAGE_PATH="$ROOT_DIR/docs/aj.1"
+
 mkdir -p "$DIST_DIR"
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 rm -f "$DIST_DIR"/aj_*.tar.gz "$DIST_DIR"/aj_*_checksums.txt
+
+echo "Generating man page"
+(
+  cd "$ROOT_DIR"
+  go run ./cmd/ajgenman --output "$MANPAGE_PATH"
+)
 
 for target in "${TARGETS[@]}"; do
   read -r GOOS GOARCH <<<"$target"
   ARCHIVE_STEM="aj_${VERSION}_${GOOS}_${GOARCH}"
   STAGE_DIR="$BUILD_DIR/$ARCHIVE_STEM"
   BINARY_NAME="aj"
+  MAN_DIR="$STAGE_DIR/share/man/man1"
 
   mkdir -p "$STAGE_DIR"
+  mkdir -p "$MAN_DIR"
 
   echo "Building $ARCHIVE_STEM"
   (
@@ -51,6 +61,8 @@ Install:
 Source:
   https://github.com/bugatron78/ajentwork
 EOF
+
+  cp "$MANPAGE_PATH" "$MAN_DIR/aj.1"
 
   tar -C "$BUILD_DIR" -czf "$DIST_DIR/${ARCHIVE_STEM}.tar.gz" "$ARCHIVE_STEM"
 done

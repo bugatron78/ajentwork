@@ -3,19 +3,22 @@ set -euo pipefail
 
 REPO="bugatron78/ajentwork"
 INSTALL_DIR="${HOME}/.local/bin"
+MAN_DIR="${HOME}/.local/share/man/man1"
 VERSION=""
+INSTALL_MANPAGE=1
 
 usage() {
   cat <<'EOF'
 Install aj from a GitHub release.
 
 Usage:
-  install.sh [--version <tag>] [--install-dir <path>]
+  install.sh [--version <tag>] [--install-dir <path>] [--man-dir <path>] [--no-man]
 
 Examples:
   install.sh
   install.sh --version v0.1.1
   install.sh --install-dir "$HOME/.local/bin"
+  install.sh --man-dir "$HOME/.local/share/man/man1"
 EOF
 }
 
@@ -68,6 +71,14 @@ while [[ $# -gt 0 ]]; do
     --install-dir)
       INSTALL_DIR="${2:-}"
       shift 2
+      ;;
+    --man-dir)
+      MAN_DIR="${2:-}"
+      shift 2
+      ;;
+    --no-man)
+      INSTALL_MANPAGE=0
+      shift
       ;;
     --help|-h)
       usage
@@ -144,4 +155,10 @@ mkdir -p "$INSTALL_DIR"
 install "$TMP_DIR/aj_${VERSION}_${GOOS}_${GOARCH}/aj" "$INSTALL_DIR/aj"
 
 echo "Installed aj to $INSTALL_DIR/aj"
+if [[ "$INSTALL_MANPAGE" -eq 1 && -f "$TMP_DIR/aj_${VERSION}_${GOOS}_${GOARCH}/share/man/man1/aj.1" ]]; then
+  mkdir -p "$MAN_DIR"
+  install "$TMP_DIR/aj_${VERSION}_${GOOS}_${GOARCH}/share/man/man1/aj.1" "$MAN_DIR/aj.1"
+  echo "Installed man page to $MAN_DIR/aj.1"
+fi
+
 echo "Run '$INSTALL_DIR/aj --help' to verify the installation."

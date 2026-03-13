@@ -1,0 +1,11 @@
+id = "W-KFDXSH7K"
+kind = "feature"
+title = "Generate man page from help registry"
+status = "done"
+priority = 1
+created_at = "2026-03-13T18:48:08Z"
+updated_at = "2026-03-13T18:52:08Z"
+goal = "ship an aj(1) man page that stays aligned with the structured help system"
+summary = "man page generation, packaging, and install paths are wired"
+next_action = ""
+depends_on = []
