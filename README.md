@@ -54,6 +54,30 @@ brew install aj
 
 The published tap lives at `bugatron78/homebrew-ajentwork`, and the formula builds `aj` from source with Go.
 
+## Jira Adapter
+
+The first Jira adapter slice supports:
+
+- `aj jira pull <key>`
+- `aj jira push <id> [--project <key>] [--type <name>]`
+- `aj take jira <key> --agent <name>`
+
+Set credentials through environment variables:
+
+```bash
+export AJ_JIRA_EMAIL="you@example.com"
+export AJ_JIRA_API_TOKEN="..."
+```
+
+Then enable Jira in `.aj/config.toml` and set at least:
+
+```toml
+[jira]
+enabled = true
+base_url = "https://your-domain.atlassian.net"
+project = "ABC"
+```
+
 ## Release Artifacts
 
 Build shareable binaries for macOS and Linux:

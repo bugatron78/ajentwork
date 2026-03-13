@@ -314,6 +314,27 @@ func DefaultRegistry() Registry {
 			SearchKeywords: []string{"actionable", "ready", "unblocked"},
 		},
 		{
+			Name:    "jira",
+			Summary: "import or export Jira issues",
+			Purpose: "Use the Jira adapter to pull Jira issues into local aj items, push local items to Jira, and support import-plus-claim workflows.",
+			Usage:   "aj jira <pull|push> ...",
+			Options: []OptionDoc{
+				{Name: "pull <key>", Description: "import a Jira issue into aj unless it is already linked"},
+				{Name: "push <id>", Description: "create a Jira issue from a local aj item unless it is already linked"},
+				{Name: "env: AJ_JIRA_EMAIL", Description: "email used for Jira Cloud basic auth"},
+				{Name: "env: AJ_JIRA_API_TOKEN", Description: "API token used for Jira Cloud basic auth"},
+			},
+			Examples: []ExampleDoc{
+				{Label: "Import a Jira issue", Command: "aj jira pull ABC-123"},
+				{Label: "Push a local item to Jira", Command: "aj jira push W-8F3K2P1Q --project ABC --type Task"},
+				{Label: "Import and claim Jira work", Command: "aj take jira ABC-123 --agent coder-1"},
+			},
+			Related:        []string{"take", "show", "workflows"},
+			Safety:         []string{"Set Jira credentials through environment variables instead of committing secrets into .aj/config.toml."},
+			WorkflowTags:   []string{"jira", "integration"},
+			SearchKeywords: []string{"jira", "import", "export", "sync"},
+		},
+		{
 			Name:    "init",
 			Summary: "create the .aj workspace structure in the current repository",
 			Purpose: "Bootstrap a repository for aj by creating the .aj directory tree, default config, cache directory, and artifact directories.",
@@ -425,10 +446,10 @@ func DefaultRegistry() Registry {
 			Name:  "jira",
 			Topic: "import and claim human-created Jira work",
 			Steps: []string{
-				"1. Run `aj take jira ABC-123 --agent coder-1` once Jira support is available.",
-				"2. Use `aj show <id>` to inspect the normalized local item.",
-				"3. Use `aj update <id> --summary ... --next ...` to record progress.",
-				"4. Use `aj jira sync <id>` at milestone boundaries.",
+				"1. Set `AJ_JIRA_EMAIL` and `AJ_JIRA_API_TOKEN`, and enable Jira in `.aj/config.toml`.",
+				"2. Run `aj take jira ABC-123 --agent coder-1` to import and claim human-created work.",
+				"3. Use `aj show <id>` to inspect the normalized local item.",
+				"4. Use `aj update <id> --summary ... --next ...` to record progress, or `aj jira push <id>` to export local work back to Jira.",
 			},
 		},
 		"blocked": {
@@ -575,7 +596,8 @@ func DefaultRegistry() Registry {
 			Topic: "jira",
 			Examples: []ExampleDoc{
 				{Label: "Import and claim Jira work", Command: "aj take jira ABC-123 --agent coder-1"},
-				{Label: "Sync a linked item", Command: "aj jira sync W-8F3K2P1Q --dry-run"},
+				{Label: "Import a Jira issue", Command: "aj jira pull ABC-123"},
+				{Label: "Push a local item to Jira", Command: "aj jira push W-8F3K2P1Q --project ABC --type Task"},
 			},
 		},
 	}
@@ -633,6 +655,8 @@ func (r Registry) Commands() []CommandSummary {
 		switch doc.Name {
 		case "help", "commands", "workflows", "examples", "glossary":
 			group = "Discovery"
+		case "jira":
+			group = "Jira"
 		}
 
 		result = append(result, CommandSummary{

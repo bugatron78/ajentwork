@@ -73,6 +73,9 @@ func ItemShowBrief(item domain.Item) string {
 	if item.Lease != nil {
 		lines = append(lines, fmt.Sprintf("Lease: %s until %s", item.Lease.Owner, item.Lease.ExpiresAt.Format("2006-01-02T15:04:05Z")))
 	}
+	if item.Jira != nil {
+		lines = append(lines, fmt.Sprintf("Jira: %s", item.Jira.Key))
+	}
 	if len(item.DependsOn) > 0 {
 		lines = append(lines, fmt.Sprintf("Depends On: %s", strings.Join(item.DependsOn, ", ")))
 	}
@@ -92,6 +95,9 @@ func ItemShowPrompt(item domain.Item) string {
 	}
 	if item.Lease != nil {
 		lines = append(lines, "Lease: "+item.Lease.Owner+" until "+item.Lease.ExpiresAt.Format("2006-01-02T15:04:05Z"))
+	}
+	if item.Jira != nil {
+		lines = append(lines, "Jira: "+item.Jira.Key)
 	}
 	if len(item.DependsOn) > 0 {
 		lines = append(lines, "Depends On: "+strings.Join(item.DependsOn, ", "))

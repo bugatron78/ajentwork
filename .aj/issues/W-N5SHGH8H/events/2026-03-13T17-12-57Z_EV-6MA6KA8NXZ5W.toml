@@ -1,0 +1,6 @@
+id = "EV-6MA6KA8NXZ5W"
+item_id = "W-N5SHGH8H"
+type = "updated"
+at = "2026-03-13T17:12:57Z"
+actor = "system"
+summary = "Jira adapter now supports pull push and take-jira with config-backed Jira links"

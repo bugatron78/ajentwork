@@ -1,0 +1,6 @@
+id = "EV-BAMZWPAP4TZX"
+item_id = "W-P44RQHFE"
+type = "done"
+at = "2026-03-13T17:12:57Z"
+actor = "system"
+summary = "first Jira adapter slice now supports pull push and take-jira flows"

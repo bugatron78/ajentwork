@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -10,8 +11,10 @@ import (
 	"strings"
 	"time"
 
+	"ajentwork/internal/config"
 	"ajentwork/internal/domain"
 	"ajentwork/internal/idgen"
+	"ajentwork/internal/jira"
 )
 
 type CreateItemOptions struct {
@@ -87,6 +90,28 @@ type LinkDependencyOptions struct {
 	RepoPath    string
 	ItemID      string
 	DependsOnID string
+}
+
+type ImportJiraIssueOptions struct {
+	RepoPath string
+	IssueKey string
+}
+
+type ImportJiraIssueResult struct {
+	Item          domain.Item `json:"item"`
+	AlreadyLinked bool        `json:"already_linked"`
+}
+
+type ExportJiraIssueOptions struct {
+	RepoPath   string
+	ItemID     string
+	ProjectKey string
+	IssueType  string
+}
+
+type ExportJiraIssueResult struct {
+	Item          domain.Item `json:"item"`
+	AlreadyLinked bool        `json:"already_linked"`
 }
 
 type NextItemResult struct {
@@ -556,6 +581,103 @@ func LinkDependency(opts LinkDependencyOptions) (domain.Item, error) {
 	return item, nil
 }
 
+func ImportJiraIssue(opts ImportJiraIssueOptions) (ImportJiraIssueResult, error) {
+	if strings.TrimSpace(opts.IssueKey) == "" {
+		return ImportJiraIssueResult{}, errors.New("jira issue key is required")
+	}
+
+	if existing, ok, err := findItemByJiraKey(opts.RepoPath, opts.IssueKey); err != nil {
+		return ImportJiraIssueResult{}, err
+	} else if ok {
+		return ImportJiraIssueResult{Item: existing, AlreadyLinked: true}, nil
+	}
+
+	settings, err := config.ResolveJiraSettings(opts.RepoPath)
+	if err != nil {
+		return ImportJiraIssueResult{}, err
+	}
+	client := jira.Client{
+		BaseURL:    settings.BaseURL,
+		Email:      settings.Email,
+		APIToken:   settings.APIToken,
+		HTTPClient: jira.DefaultHTTPClient,
+	}
+
+	remoteIssue, err := client.GetIssue(context.Background(), opts.IssueKey)
+	if err != nil {
+		return ImportJiraIssueResult{}, err
+	}
+
+	item, err := createImportedJiraItem(opts.RepoPath, remoteIssue, settings.StatusMap)
+	if err != nil {
+		return ImportJiraIssueResult{}, err
+	}
+
+	return ImportJiraIssueResult{Item: item}, nil
+}
+
+func ExportJiraIssue(opts ExportJiraIssueOptions) (ExportJiraIssueResult, error) {
+	if strings.TrimSpace(opts.ItemID) == "" {
+		return ExportJiraIssueResult{}, errors.New("item id is required")
+	}
+
+	item, itemDir, err := loadItemForMutation(opts.RepoPath, opts.ItemID)
+	if err != nil {
+		return ExportJiraIssueResult{}, err
+	}
+	if item.Jira != nil && item.Jira.Key != "" {
+		return ExportJiraIssueResult{Item: item, AlreadyLinked: true}, nil
+	}
+
+	settings, err := config.ResolveJiraSettings(opts.RepoPath)
+	if err != nil {
+		return ExportJiraIssueResult{}, err
+	}
+	projectKey := strings.TrimSpace(opts.ProjectKey)
+	if projectKey == "" {
+		projectKey = settings.Project
+	}
+	if projectKey == "" {
+		return ExportJiraIssueResult{}, errors.New("jira project is required; set [jira].project or pass --project")
+	}
+	issueType := strings.TrimSpace(opts.IssueType)
+	if issueType == "" {
+		issueType = jiraIssueTypeForItem(item.Kind)
+	}
+
+	client := jira.Client{
+		BaseURL:    settings.BaseURL,
+		Email:      settings.Email,
+		APIToken:   settings.APIToken,
+		HTTPClient: jira.DefaultHTTPClient,
+	}
+	created, err := client.CreateIssue(context.Background(), jira.CreateIssueInput{
+		ProjectKey:  projectKey,
+		IssueType:   issueType,
+		Summary:     item.Title,
+		Description: jiraDescriptionForItem(item),
+	})
+	if err != nil {
+		return ExportJiraIssueResult{}, err
+	}
+
+	now := time.Now().UTC().Truncate(time.Second)
+	item.Jira = &domain.JiraLink{
+		Key:          created.Key,
+		URL:          created.URL,
+		SyncMode:     "export_only",
+		SyncState:    "clean",
+		LastSyncedAt: &now,
+	}
+	item.UpdatedAt = now
+	item.Summary = fmt.Sprintf("linked to Jira %s", created.Key)
+
+	if err := persistItemMutation(itemDir, item, "linked_external", "system", item.Summary); err != nil {
+		return ExportJiraIssueResult{}, err
+	}
+	return ExportJiraIssueResult{Item: item}, nil
+}
+
 func ListItems(repoPath string) ([]domain.Item, error) {
 	ajDir, err := ensureAJRepo(repoPath)
 	if err != nil {
@@ -829,6 +951,185 @@ func ListChanges(opts ChangesOptions) ([]domain.Event, error) {
 	return events, nil
 }
 
+func findItemByJiraKey(repoPath, issueKey string) (domain.Item, bool, error) {
+	items, err := ListItems(repoPath)
+	if err != nil {
+		return domain.Item{}, false, err
+	}
+	for _, item := range items {
+		if item.Jira != nil && strings.EqualFold(item.Jira.Key, strings.TrimSpace(issueKey)) {
+			return item, true, nil
+		}
+	}
+	return domain.Item{}, false, nil
+}
+
+func createImportedJiraItem(repoPath string, issue jira.Issue, statusMap map[string]domain.Status) (domain.Item, error) {
+	ajDir, err := ensureAJRepo(repoPath)
+	if err != nil {
+		return domain.Item{}, err
+	}
+
+	var itemID string
+	for attempt := 0; attempt < 5; attempt++ {
+		itemID, err = idgen.NewItemID()
+		if err != nil {
+			return domain.Item{}, err
+		}
+		itemDir := filepath.Join(ajDir, "issues", itemID)
+		_, statErr := os.Stat(itemDir)
+		if errors.Is(statErr, os.ErrNotExist) {
+			break
+		}
+		if statErr != nil {
+			return domain.Item{}, fmt.Errorf("check item directory %s: %w", itemDir, statErr)
+		}
+		itemID = ""
+	}
+	if itemID == "" {
+		return domain.Item{}, errors.New("failed to allocate a unique item id")
+	}
+
+	now := time.Now().UTC().Truncate(time.Second)
+	status := mapJiraStatus(issue.Status, statusMap)
+	nextAction := importedNextAction(status, issue.Key)
+	lastSyncedAt := now
+	item := domain.Item{
+		ID:         itemID,
+		Kind:       mapJiraIssueType(issue.IssueType),
+		Title:      defaultJiraTitle(issue),
+		Status:     status,
+		Priority:   mapJiraPriority(issue.Priority),
+		CreatedAt:  now,
+		UpdatedAt:  now,
+		Goal:       defaultJiraGoal(issue),
+		Summary:    fmt.Sprintf("imported from Jira %s", issue.Key),
+		NextAction: nextAction,
+		Jira: &domain.JiraLink{
+			Key:               issue.Key,
+			URL:               issue.URL,
+			SyncMode:          "import_only",
+			SyncState:         "clean",
+			LastSyncedAt:      &lastSyncedAt,
+			LastRemoteVersion: issue.Updated,
+		},
+	}
+
+	itemDir := filepath.Join(ajDir, "issues", item.ID)
+	eventsDir := filepath.Join(itemDir, "events")
+	if err := os.MkdirAll(eventsDir, 0o755); err != nil {
+		return domain.Item{}, fmt.Errorf("create item directories: %w", err)
+	}
+	metaPath := filepath.Join(itemDir, "meta.toml")
+	if err := os.WriteFile(metaPath, []byte(marshalItem(item)), 0o644); err != nil {
+		return domain.Item{}, fmt.Errorf("write item metadata: %w", err)
+	}
+	if err := writeCreatedEvent(eventsDir, item); err != nil {
+		return domain.Item{}, err
+	}
+	if err := appendEvent(eventsDir, item.ID, "linked_external", now, "system", item.Summary); err != nil {
+		return domain.Item{}, err
+	}
+	return item, nil
+}
+
+func mapJiraIssueType(issueType string) domain.ItemKind {
+	switch strings.ToLower(strings.TrimSpace(issueType)) {
+	case "bug":
+		return domain.KindBug
+	case "feature", "story":
+		return domain.KindFeature
+	case "epic":
+		return domain.KindEpic
+	case "spike":
+		return domain.KindSpike
+	default:
+		return domain.KindTask
+	}
+}
+
+func jiraIssueTypeForItem(kind domain.ItemKind) string {
+	switch kind {
+	case domain.KindBug:
+		return "Bug"
+	case domain.KindEpic:
+		return "Epic"
+	case domain.KindFeature:
+		return "Story"
+	case domain.KindSpike:
+		return "Task"
+	default:
+		return "Task"
+	}
+}
+
+func mapJiraPriority(priority string) int {
+	switch strings.ToLower(strings.TrimSpace(priority)) {
+	case "highest":
+		return 0
+	case "high":
+		return 1
+	case "medium":
+		return 2
+	case "low":
+		return 3
+	case "lowest":
+		return 4
+	default:
+		return 2
+	}
+}
+
+func mapJiraStatus(status string, statusMap map[string]domain.Status) domain.Status {
+	if mapped, ok := statusMap[strings.TrimSpace(status)]; ok {
+		return mapped
+	}
+	return domain.StatusTodo
+}
+
+func importedNextAction(status domain.Status, issueKey string) string {
+	switch status {
+	case domain.StatusBlocked:
+		return fmt.Sprintf("Wait for Jira issue %s blockers to clear or update the local next action", issueKey)
+	case domain.StatusInReview:
+		return "Review the imported Jira issue state and decide on the next follow-up"
+	case domain.StatusDone, domain.StatusCanceled:
+		return ""
+	default:
+		return "Review the imported Jira issue details and continue work"
+	}
+}
+
+func defaultJiraTitle(issue jira.Issue) string {
+	if strings.TrimSpace(issue.Summary) != "" {
+		return strings.TrimSpace(issue.Summary)
+	}
+	return fmt.Sprintf("Imported Jira issue %s", issue.Key)
+}
+
+func defaultJiraGoal(issue jira.Issue) string {
+	if strings.TrimSpace(issue.Description) != "" {
+		return strings.TrimSpace(issue.Description)
+	}
+	if strings.TrimSpace(issue.Summary) != "" {
+		return fmt.Sprintf("Imported from Jira %s: %s", issue.Key, strings.TrimSpace(issue.Summary))
+	}
+	return fmt.Sprintf("Imported from Jira %s", issue.Key)
+}
+
+func jiraDescriptionForItem(item domain.Item) string {
+	parts := []string{
+		"Goal:\n" + item.Goal,
+	}
+	if strings.TrimSpace(item.Summary) != "" {
+		parts = append(parts, "Current Summary:\n"+strings.TrimSpace(item.Summary))
+	}
+	if strings.TrimSpace(item.NextAction) != "" {
+		parts = append(parts, "Next Action:\n"+strings.TrimSpace(item.NextAction))
+	}
+	return strings.Join(parts, "\n\n")
+}
+
 func loadItemForMutation(repoPath, itemID string) (domain.Item, string, error) {
 	ajDir, err := ensureAJRepo(repoPath)
 	if err != nil {
@@ -909,6 +1210,16 @@ func marshalItem(item domain.Item) string {
 		lines = append(lines, fmt.Sprintf("lease_owner = %s", strconv.Quote(item.Lease.Owner)))
 		lines = append(lines, fmt.Sprintf("lease_claimed_at = %s", strconv.Quote(item.Lease.ClaimedAt.Format(time.RFC3339))))
 		lines = append(lines, fmt.Sprintf("lease_expires_at = %s", strconv.Quote(item.Lease.ExpiresAt.Format(time.RFC3339))))
+	}
+	if item.Jira != nil {
+		lines = append(lines, fmt.Sprintf("jira_key = %s", strconv.Quote(item.Jira.Key)))
+		lines = append(lines, fmt.Sprintf("jira_url = %s", strconv.Quote(item.Jira.URL)))
+		lines = append(lines, fmt.Sprintf("jira_sync_mode = %s", strconv.Quote(item.Jira.SyncMode)))
+		lines = append(lines, fmt.Sprintf("jira_sync_state = %s", strconv.Quote(item.Jira.SyncState)))
+		lines = append(lines, fmt.Sprintf("jira_last_remote_version = %s", strconv.Quote(item.Jira.LastRemoteVersion)))
+		if item.Jira.LastSyncedAt != nil {
+			lines = append(lines, fmt.Sprintf("jira_last_synced_at = %s", strconv.Quote(item.Jira.LastSyncedAt.Format(time.RFC3339))))
+		}
 	}
 	lines = append(lines, "")
 	return strings.Join(lines, "\n")
@@ -1029,6 +1340,50 @@ func parseItem(raw string) (domain.Item, error) {
 		}
 	}
 
+	var jiraLink *domain.JiraLink
+	jiraKeyRaw, hasJiraKey := values["jira_key"]
+	if hasJiraKey {
+		jiraKey, err := strconv.Unquote(jiraKeyRaw)
+		if err != nil {
+			return domain.Item{}, fmt.Errorf("invalid quoted value for jira_key: %w", err)
+		}
+		jiraURL, err := requiredString("jira_url")
+		if err != nil {
+			return domain.Item{}, err
+		}
+		jiraSyncMode, err := requiredString("jira_sync_mode")
+		if err != nil {
+			return domain.Item{}, err
+		}
+		jiraSyncState, err := requiredString("jira_sync_state")
+		if err != nil {
+			return domain.Item{}, err
+		}
+		lastRemoteVersion := ""
+		if rawVersion, ok := values["jira_last_remote_version"]; ok {
+			lastRemoteVersion, err = strconv.Unquote(rawVersion)
+			if err != nil {
+				return domain.Item{}, fmt.Errorf("invalid quoted value for jira_last_remote_version: %w", err)
+			}
+		}
+		var lastSyncedAt *time.Time
+		if _, ok := values["jira_last_synced_at"]; ok {
+			parsed, err := parseTime("jira_last_synced_at")
+			if err != nil {
+				return domain.Item{}, err
+			}
+			lastSyncedAt = &parsed
+		}
+		jiraLink = &domain.JiraLink{
+			Key:               jiraKey,
+			URL:               jiraURL,
+			SyncMode:          jiraSyncMode,
+			SyncState:         jiraSyncState,
+			LastSyncedAt:      lastSyncedAt,
+			LastRemoteVersion: lastRemoteVersion,
+		}
+	}
+
 	return domain.Item{
 		ID:         id,
 		Kind:       kind,
@@ -1042,6 +1397,7 @@ func parseItem(raw string) (domain.Item, error) {
 		NextAction: nextAction,
 		DependsOn:  dependsOn,
 		Lease:      lease,
+		Jira:       jiraLink,
 	}, nil
 }
 

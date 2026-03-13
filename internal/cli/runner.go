@@ -104,6 +104,8 @@ func (r Runner) run(args []string) (int, error) {
 		return r.runChanges(globals, commandArgs)
 	case "ready":
 		return r.runReady(globals, commandArgs)
+	case "jira":
+		return r.runJira(globals, commandArgs)
 	case "help":
 		return r.runHelp(globals, commandArgs)
 	case "commands":
@@ -694,6 +696,9 @@ func (r Runner) runTake(globals globalOptions, args []string) (int, error) {
 	if len(args) == 0 {
 		return 2, errors.New("usage: aj take <id> --agent <name> [--ttl 4h] [--force]")
 	}
+	if args[0] == "jira" {
+		return r.runTakeJira(globals, args[1:])
+	}
 
 	itemID := args[0]
 	agent := ""
@@ -746,6 +751,91 @@ func (r Runner) runTake(globals globalOptions, args []string) (int, error) {
 		return 0, err
 	case domain.FormatJSON:
 		return r.renderJSON(item)
+	default:
+		return 2, fmt.Errorf("unsupported format %q", globals.format)
+	}
+}
+
+func (r Runner) runTakeJira(globals globalOptions, args []string) (int, error) {
+	if len(args) == 0 {
+		return 2, errors.New("usage: aj take jira <key> --agent <name> [--ttl 4h] [--force]")
+	}
+
+	issueKey := args[0]
+	agent := ""
+	ttl := 4 * time.Hour
+	force := false
+
+	for i := 1; i < len(args); i++ {
+		switch args[i] {
+		case "--agent":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --agent")
+			}
+			agent = args[i]
+		case "--ttl":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --ttl")
+			}
+			parsed, err := time.ParseDuration(args[i])
+			if err != nil {
+				return 2, fmt.Errorf("invalid ttl %q", args[i])
+			}
+			ttl = parsed
+		case "--force":
+			force = true
+		default:
+			return 2, fmt.Errorf("unknown option for take jira: %s", args[i])
+		}
+	}
+
+	importService := app.ImportJiraIssueService{}
+	imported, err := importService.Run(app.ImportJiraIssueInput{
+		RepoPath: globals.repoPath,
+		IssueKey: issueKey,
+	})
+	if err != nil {
+		return 1, err
+	}
+
+	takeService := app.TakeItemService{}
+	item, err := takeService.Run(app.TakeItemInput{
+		RepoPath: globals.repoPath,
+		ItemID:   imported.Item.ID,
+		Agent:    agent,
+		TTL:      ttl,
+		Force:    force,
+	})
+	if err != nil {
+		return 1, err
+	}
+
+	switch globals.format {
+	case domain.FormatBrief:
+		if imported.AlreadyLinked {
+			_, err = fmt.Fprintf(r.stdout, "using existing %s for Jira %s\n%s\n", item.ID, issueKey, render.ItemTakenBrief(item))
+		} else {
+			_, err = fmt.Fprintf(r.stdout, "imported Jira %s as %s\n%s\n", issueKey, item.ID, render.ItemTakenBrief(item))
+		}
+		return 0, err
+	case domain.FormatPrompt:
+		if imported.AlreadyLinked {
+			_, err = fmt.Fprintf(r.stdout, "Status: existing Jira link\nJira: %s\nID: %s\n%s\n", issueKey, item.ID, render.ItemTakenPrompt(item))
+		} else {
+			_, err = fmt.Fprintf(r.stdout, "Status: imported Jira issue\nJira: %s\nID: %s\n%s\n", issueKey, item.ID, render.ItemTakenPrompt(item))
+		}
+		return 0, err
+	case domain.FormatJSON:
+		payload := struct {
+			Item          domain.Item `json:"item"`
+			AlreadyLinked bool        `json:"already_linked"`
+		}{
+			Item:          item,
+			AlreadyLinked: imported.AlreadyLinked,
+		}
+		return r.renderJSON(payload)
 	default:
 		return 2, fmt.Errorf("unsupported format %q", globals.format)
 	}
@@ -1181,6 +1271,130 @@ func (r Runner) runReady(globals globalOptions, args []string) (int, error) {
 		return 0, err
 	case domain.FormatJSON:
 		return r.renderJSON(results)
+	default:
+		return 2, fmt.Errorf("unsupported format %q", globals.format)
+	}
+}
+
+func (r Runner) runJira(globals globalOptions, args []string) (int, error) {
+	if len(args) == 0 {
+		return r.renderCommandHelp("jira", globals.format)
+	}
+	if args[0] == "--help" || args[0] == "-h" {
+		return r.renderCommandHelp("jira", globals.format)
+	}
+
+	switch args[0] {
+	case "pull":
+		return r.runJiraPull(globals, args[1:])
+	case "push":
+		return r.runJiraPush(globals, args[1:])
+	default:
+		return 2, fmt.Errorf("unknown jira subcommand %q\ntry: aj jira --help", args[0])
+	}
+}
+
+func (r Runner) runJiraPull(globals globalOptions, args []string) (int, error) {
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			return r.renderCommandHelp("jira", globals.format)
+		}
+	}
+	if len(args) != 1 {
+		return 2, errors.New("usage: aj jira pull <key>")
+	}
+
+	service := app.ImportJiraIssueService{}
+	result, err := service.Run(app.ImportJiraIssueInput{
+		RepoPath: globals.repoPath,
+		IssueKey: args[0],
+	})
+	if err != nil {
+		return 1, err
+	}
+
+	switch globals.format {
+	case domain.FormatBrief:
+		if result.AlreadyLinked {
+			_, err = fmt.Fprintf(r.stdout, "using existing %s for Jira %s\n", result.Item.ID, args[0])
+		} else {
+			_, err = fmt.Fprintf(r.stdout, "imported Jira %s as %s\n", args[0], result.Item.ID)
+		}
+		return 0, err
+	case domain.FormatPrompt:
+		status := "imported Jira issue"
+		if result.AlreadyLinked {
+			status = "existing Jira link"
+		}
+		_, err = fmt.Fprintf(r.stdout, "Status: %s\nJira: %s\nID: %s\nTitle: %s\n", status, args[0], result.Item.ID, result.Item.Title)
+		return 0, err
+	case domain.FormatJSON:
+		return r.renderJSON(result)
+	default:
+		return 2, fmt.Errorf("unsupported format %q", globals.format)
+	}
+}
+
+func (r Runner) runJiraPush(globals globalOptions, args []string) (int, error) {
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			return r.renderCommandHelp("jira", globals.format)
+		}
+	}
+	if len(args) == 0 {
+		return 2, errors.New("usage: aj jira push <id> [--project <key>] [--type <name>]")
+	}
+
+	itemID := args[0]
+	projectKey := ""
+	issueType := ""
+	for i := 1; i < len(args); i++ {
+		switch args[i] {
+		case "--project":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --project")
+			}
+			projectKey = args[i]
+		case "--type":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --type")
+			}
+			issueType = args[i]
+		default:
+			return 2, fmt.Errorf("unknown option for jira push: %s", args[i])
+		}
+	}
+
+	service := app.ExportJiraIssueService{}
+	result, err := service.Run(app.ExportJiraIssueInput{
+		RepoPath:   globals.repoPath,
+		ItemID:     itemID,
+		ProjectKey: projectKey,
+		IssueType:  issueType,
+	})
+	if err != nil {
+		return 1, err
+	}
+
+	switch globals.format {
+	case domain.FormatBrief:
+		if result.AlreadyLinked {
+			_, err = fmt.Fprintf(r.stdout, "already linked %s to Jira %s\n", result.Item.ID, result.Item.Jira.Key)
+		} else {
+			_, err = fmt.Fprintf(r.stdout, "exported %s to Jira %s\n", result.Item.ID, result.Item.Jira.Key)
+		}
+		return 0, err
+	case domain.FormatPrompt:
+		status := "exported to Jira"
+		if result.AlreadyLinked {
+			status = "already linked to Jira"
+		}
+		_, err = fmt.Fprintf(r.stdout, "Status: %s\nID: %s\nJira: %s\n", status, result.Item.ID, result.Item.Jira.Key)
+		return 0, err
+	case domain.FormatJSON:
+		return r.renderJSON(result)
 	default:
 		return 2, fmt.Errorf("unsupported format %q", globals.format)
 	}

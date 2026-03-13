@@ -1,6 +1,10 @@
 package store
 
 import (
+	"encoding/base64"
+	"encoding/json"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,6 +12,7 @@ import (
 	"time"
 
 	"ajentwork/internal/domain"
+	"ajentwork/internal/jira"
 )
 
 func TestCreateListAndGetItem(t *testing.T) {
@@ -568,5 +573,149 @@ func TestReadyFiltersBlockedAndForeignLeasedItems(t *testing.T) {
 	}
 	if !foundReady {
 		t.Fatalf("expected ready item %s to appear", readyItem.ID)
+	}
+}
+
+func TestImportAndExportJiraIssue(t *testing.T) {
+	repo := t.TempDir()
+	if _, err := InitRepo(InitOptions{RepoPath: repo}); err != nil {
+		t.Fatalf("init repo: %v", err)
+	}
+
+	oldClient := jira.DefaultHTTPClient
+	defer func() { jira.DefaultHTTPClient = oldClient }()
+	jira.DefaultHTTPClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		wantAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte("agent@example.com:secret"))
+		if r.Header.Get("Authorization") != wantAuth {
+			return testJSONResponse(http.StatusUnauthorized, "unauthorized"), nil
+		}
+		switch {
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/rest/api/3/issue/ABC-123"):
+			payload, _ := json.Marshal(map[string]any{
+				"key":  "ABC-123",
+				"self": "https://example.atlassian.net/rest/api/3/issue/10000",
+				"fields": map[string]any{
+					"summary": "Imported bug",
+					"description": map[string]any{
+						"type":    "doc",
+						"version": 1,
+						"content": []any{
+							map[string]any{
+								"type": "paragraph",
+								"content": []any{
+									map[string]any{"type": "text", "text": "Investigate the failing sync path."},
+								},
+							},
+						},
+					},
+					"issuetype": map[string]any{"name": "Bug"},
+					"priority":  map[string]any{"name": "High"},
+					"status":    map[string]any{"name": "In Progress"},
+					"updated":   "2026-03-13T12:00:00.000+0000",
+				},
+			})
+			return testJSONResponse(http.StatusOK, string(payload)), nil
+		case r.Method == http.MethodPost && r.URL.Path == "/rest/api/3/issue":
+			payload, _ := json.Marshal(map[string]any{
+				"key":  "ABC-456",
+				"self": "https://example.atlassian.net/rest/api/3/issue/10001",
+			})
+			return testJSONResponse(http.StatusCreated, string(payload)), nil
+		default:
+			return testJSONResponse(http.StatusNotFound, "not found"), nil
+		}
+	})}
+
+	writeJiraTestConfig(t, repo, "https://example.atlassian.net", "ABC")
+	t.Setenv("AJ_JIRA_EMAIL", "agent@example.com")
+	t.Setenv("AJ_JIRA_API_TOKEN", "secret")
+
+	imported, err := ImportJiraIssue(ImportJiraIssueOptions{
+		RepoPath: repo,
+		IssueKey: "ABC-123",
+	})
+	if err != nil {
+		t.Fatalf("import jira issue: %v", err)
+	}
+	if imported.AlreadyLinked {
+		t.Fatalf("expected first import to create a new local item")
+	}
+	if imported.Item.Jira == nil || imported.Item.Jira.Key != "ABC-123" {
+		t.Fatalf("expected jira metadata on imported item, got %#v", imported.Item.Jira)
+	}
+	if imported.Item.Kind != domain.KindBug || imported.Item.Status != domain.StatusInProgress {
+		t.Fatalf("unexpected imported item mapping: %#v", imported.Item)
+	}
+
+	reused, err := ImportJiraIssue(ImportJiraIssueOptions{
+		RepoPath: repo,
+		IssueKey: "ABC-123",
+	})
+	if err != nil {
+		t.Fatalf("re-import jira issue: %v", err)
+	}
+	if !reused.AlreadyLinked || reused.Item.ID != imported.Item.ID {
+		t.Fatalf("expected import reuse, got %#v", reused)
+	}
+
+	local, err := CreateItem(CreateItemOptions{
+		RepoPath:   repo,
+		Kind:       domain.KindTask,
+		Title:      "Export me",
+		Goal:       "Create a Jira issue from local work",
+		NextAction: "Push to Jira",
+		Priority:   1,
+	})
+	if err != nil {
+		t.Fatalf("create local item: %v", err)
+	}
+
+	exported, err := ExportJiraIssue(ExportJiraIssueOptions{
+		RepoPath: repo,
+		ItemID:   local.ID,
+	})
+	if err != nil {
+		t.Fatalf("export jira issue: %v", err)
+	}
+	if exported.Item.Jira == nil || exported.Item.Jira.Key != "ABC-456" {
+		t.Fatalf("expected exported jira key, got %#v", exported.Item.Jira)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return fn(req)
+}
+
+func testJSONResponse(status int, body string) *http.Response {
+	return &http.Response{
+		StatusCode: status,
+		Status:     http.StatusText(status),
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}
+}
+
+func writeJiraTestConfig(t *testing.T, repo, baseURL, project string) {
+	t.Helper()
+	raw := `schema_version = 1
+default_output = "brief"
+default_lease_ttl = "4h"
+
+[jira]
+enabled = true
+base_url = "` + baseURL + `"
+project = "` + project + `"
+
+[jira.status_map]
+"To Do" = "todo"
+"In Progress" = "in_progress"
+"Blocked" = "blocked"
+"In Review" = "in_review"
+"Done" = "done"
+`
+	if err := os.WriteFile(filepath.Join(repo, ".aj", "config.toml"), []byte(raw), 0o644); err != nil {
+		t.Fatalf("write jira test config: %v", err)
 	}
 }

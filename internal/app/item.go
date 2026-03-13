@@ -262,3 +262,35 @@ func (s ReadyService) Run(input ReadyInput) ([]store.ReadyEntry, error) {
 		Agent:    input.Agent,
 	})
 }
+
+type ImportJiraIssueInput struct {
+	RepoPath string
+	IssueKey string
+}
+
+type ImportJiraIssueService struct{}
+
+func (s ImportJiraIssueService) Run(input ImportJiraIssueInput) (store.ImportJiraIssueResult, error) {
+	return store.ImportJiraIssue(store.ImportJiraIssueOptions{
+		RepoPath: input.RepoPath,
+		IssueKey: input.IssueKey,
+	})
+}
+
+type ExportJiraIssueInput struct {
+	RepoPath   string
+	ItemID     string
+	ProjectKey string
+	IssueType  string
+}
+
+type ExportJiraIssueService struct{}
+
+func (s ExportJiraIssueService) Run(input ExportJiraIssueInput) (store.ExportJiraIssueResult, error) {
+	return store.ExportJiraIssue(store.ExportJiraIssueOptions{
+		RepoPath:   input.RepoPath,
+		ItemID:     input.ItemID,
+		ProjectKey: input.ProjectKey,
+		IssueType:  input.IssueType,
+	})
+}

@@ -2,9 +2,16 @@ package cli
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"ajentwork/internal/jira"
 )
 
 func TestRunnerInitNewListShow(t *testing.T) {
@@ -373,6 +380,155 @@ func TestRunnerChanges(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), itemID) || !strings.Contains(stdout.String(), "updated") {
 		t.Fatalf("unexpected changes output: %s", stdout.String())
+	}
+}
+
+func TestRunnerJiraPullPushAndTake(t *testing.T) {
+	repo := t.TempDir()
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	runner := NewRunner(stdout, stderr)
+
+	if code := runner.Run([]string{"--repo", repo, "init"}); code != 0 {
+		t.Fatalf("init exit code = %d, stderr = %s", code, stderr.String())
+	}
+
+	oldClient := jira.DefaultHTTPClient
+	defer func() { jira.DefaultHTTPClient = oldClient }()
+	jira.DefaultHTTPClient = &http.Client{Transport: runnerRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+		wantAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte("agent@example.com:secret"))
+		if r.Header.Get("Authorization") != wantAuth {
+			return runnerJSONResponse(http.StatusUnauthorized, "unauthorized"), nil
+		}
+		switch {
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/rest/api/3/issue/ABC-123"):
+			payload, _ := json.Marshal(map[string]any{
+				"key":  "ABC-123",
+				"self": "https://example.atlassian.net/rest/api/3/issue/10000",
+				"fields": map[string]any{
+					"summary": "Imported Jira task",
+					"description": map[string]any{
+						"type":    "doc",
+						"version": 1,
+						"content": []any{
+							map[string]any{
+								"type": "paragraph",
+								"content": []any{
+									map[string]any{"type": "text", "text": "Bring Jira into aj."},
+								},
+							},
+						},
+					},
+					"issuetype": map[string]any{"name": "Task"},
+					"priority":  map[string]any{"name": "Medium"},
+					"status":    map[string]any{"name": "To Do"},
+					"updated":   "2026-03-13T12:00:00.000+0000",
+				},
+			})
+			return runnerJSONResponse(http.StatusOK, string(payload)), nil
+		case r.Method == http.MethodPost && r.URL.Path == "/rest/api/3/issue":
+			payload, _ := json.Marshal(map[string]any{
+				"key":  "ABC-456",
+				"self": "https://example.atlassian.net/rest/api/3/issue/10001",
+			})
+			return runnerJSONResponse(http.StatusCreated, string(payload)), nil
+		default:
+			return runnerJSONResponse(http.StatusNotFound, "not found"), nil
+		}
+	})}
+
+	writeRunnerJiraTestConfig(t, repo, "https://example.atlassian.net", "ABC")
+	t.Setenv("AJ_JIRA_EMAIL", "agent@example.com")
+	t.Setenv("AJ_JIRA_API_TOKEN", "secret")
+
+	if code := runner.Run([]string{"--repo", repo, "jira", "pull", "ABC-123"}); code != 0 {
+		t.Fatalf("jira pull exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "imported Jira ABC-123 as W-") {
+		t.Fatalf("unexpected jira pull output: %s", stdout.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "take", "jira", "ABC-123", "--agent", "coder-1"}); code != 0 {
+		t.Fatalf("take jira exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "using existing") || !strings.Contains(stdout.String(), "claimed") {
+		t.Fatalf("unexpected take jira output: %s", stdout.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "new", "--kind", "task", "--title", "Push local item", "--goal", "Export into Jira", "--next", "Run jira push"}); code != 0 {
+		t.Fatalf("new exit code = %d, stderr = %s", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "ls", "--format", "json"}); code != 0 {
+		t.Fatalf("ls json exit code = %d, stderr = %s", code, stderr.String())
+	}
+	var items []map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &items); err != nil {
+		t.Fatalf("unmarshal list json: %v", err)
+	}
+
+	var localID string
+	for _, item := range items {
+		if item["title"] == "Push local item" {
+			localID = item["id"].(string)
+			break
+		}
+	}
+	if localID == "" {
+		t.Fatalf("expected local item id in list output")
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "jira", "push", localID}); code != 0 {
+		t.Fatalf("jira push exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "exported "+localID+" to Jira ABC-456") {
+		t.Fatalf("unexpected jira push output: %s", stdout.String())
+	}
+}
+
+func writeRunnerJiraTestConfig(t *testing.T, repo, baseURL, project string) {
+	t.Helper()
+	raw := `schema_version = 1
+default_output = "brief"
+default_lease_ttl = "4h"
+
+[jira]
+enabled = true
+base_url = "` + baseURL + `"
+project = "` + project + `"
+
+[jira.status_map]
+"To Do" = "todo"
+"In Progress" = "in_progress"
+"Blocked" = "blocked"
+"In Review" = "in_review"
+"Done" = "done"
+`
+	if err := os.WriteFile(filepath.Join(repo, ".aj", "config.toml"), []byte(raw), 0o644); err != nil {
+		t.Fatalf("write jira test config: %v", err)
+	}
+}
+
+type runnerRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn runnerRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return fn(req)
+}
+
+func runnerJSONResponse(status int, body string) *http.Response {
+	return &http.Response{
+		StatusCode: status,
+		Status:     http.StatusText(status),
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(body)),
 	}
 }
 

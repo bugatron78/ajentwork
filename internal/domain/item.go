@@ -50,12 +50,22 @@ type Item struct {
 	NextAction string    `json:"next_action"`
 	DependsOn  []string  `json:"depends_on,omitempty"`
 	Lease      *Lease    `json:"lease,omitempty"`
+	Jira       *JiraLink `json:"jira,omitempty"`
 }
 
 type Lease struct {
 	Owner     string    `json:"owner"`
 	ClaimedAt time.Time `json:"claimed_at"`
 	ExpiresAt time.Time `json:"expires_at"`
+}
+
+type JiraLink struct {
+	Key               string     `json:"key"`
+	URL               string     `json:"url"`
+	SyncMode          string     `json:"sync_mode"`
+	SyncState         string     `json:"sync_state"`
+	LastSyncedAt      *time.Time `json:"last_synced_at,omitempty"`
+	LastRemoteVersion string     `json:"last_remote_version,omitempty"`
 }
 
 func ParseItemKind(value string) (ItemKind, error) {
