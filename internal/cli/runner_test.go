@@ -401,6 +401,17 @@ func TestRunnerJiraPullPushAndTake(t *testing.T) {
 			return runnerJSONResponse(http.StatusUnauthorized, "unauthorized"), nil
 		}
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/api/3/issue/ABC-123/transitions":
+			payload, _ := json.Marshal(map[string]any{
+				"transitions": []any{
+					map[string]any{
+						"id":   "31",
+						"name": "Start progress",
+						"to":   map[string]any{"name": "In Progress"},
+					},
+				},
+			})
+			return runnerJSONResponse(http.StatusOK, string(payload)), nil
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/rest/api/3/issue/ABC-123"):
 			payload, _ := json.Marshal(map[string]any{
 				"key":  "ABC-123",
@@ -494,7 +505,7 @@ func TestRunnerJiraPullPushAndTake(t *testing.T) {
 	}
 }
 
-func TestRunnerJiraLinkAndSync(t *testing.T) {
+func TestRunnerJiraLinkSyncAndComment(t *testing.T) {
 	repo := t.TempDir()
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
@@ -508,12 +519,26 @@ func TestRunnerJiraLinkAndSync(t *testing.T) {
 	defer func() { jira.DefaultHTTPClient = oldClient }()
 
 	remoteUpdated := "2026-03-13T12:00:00.000+0000"
+	remoteStatus := "To Do"
+	transitionCalled := false
+	commentCalled := false
 	jira.DefaultHTTPClient = &http.Client{Transport: runnerRoundTripFunc(func(r *http.Request) (*http.Response, error) {
 		wantAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte("agent@example.com:secret"))
 		if r.Header.Get("Authorization") != wantAuth {
 			return runnerJSONResponse(http.StatusUnauthorized, "unauthorized"), nil
 		}
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/api/3/issue/ABC-123/transitions":
+			payload, _ := json.Marshal(map[string]any{
+				"transitions": []any{
+					map[string]any{
+						"id":   "31",
+						"name": "Start progress",
+						"to":   map[string]any{"name": "In Progress"},
+					},
+				},
+			})
+			return runnerJSONResponse(http.StatusOK, string(payload)), nil
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/rest/api/3/issue/ABC-123"):
 			payload, _ := json.Marshal(map[string]any{
 				"key":  "ABC-123",
@@ -522,14 +547,21 @@ func TestRunnerJiraLinkAndSync(t *testing.T) {
 					"summary":   "Linked issue",
 					"issuetype": map[string]any{"name": "Task"},
 					"priority":  map[string]any{"name": "Medium"},
-					"status":    map[string]any{"name": "To Do"},
+					"status":    map[string]any{"name": remoteStatus},
 					"updated":   remoteUpdated,
 				},
 			})
 			return runnerJSONResponse(http.StatusOK, string(payload)), nil
+		case r.Method == http.MethodPost && r.URL.Path == "/rest/api/3/issue/ABC-123/transitions":
+			transitionCalled = true
+			remoteStatus = "In Progress"
+			return runnerJSONResponse(http.StatusNoContent, ""), nil
 		case r.Method == http.MethodPut && r.URL.Path == "/rest/api/3/issue/ABC-123":
 			remoteUpdated = "2026-03-13T13:00:00.000+0000"
 			return runnerJSONResponse(http.StatusNoContent, ""), nil
+		case r.Method == http.MethodPost && r.URL.Path == "/rest/api/3/issue/ABC-123/comment":
+			commentCalled = true
+			return runnerJSONResponse(http.StatusCreated, `{"id":"10001"}`), nil
 		default:
 			return runnerJSONResponse(http.StatusNotFound, "not found"), nil
 		}
@@ -565,11 +597,41 @@ func TestRunnerJiraLinkAndSync(t *testing.T) {
 
 	stdout.Reset()
 	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "update", itemID, "--summary", "started linked work", "--status", "in_progress", "--next", "Keep local and Jira states aligned"}); code != 0 {
+		t.Fatalf("update exit code = %d, stderr = %s", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
 	if code := runner.Run([]string{"--repo", repo, "jira", "sync", itemID, "--dry-run"}); code != 0 {
 		t.Fatalf("jira sync dry-run exit code = %d, stderr = %s", code, stderr.String())
 	}
 	if !strings.Contains(stdout.String(), "direction=push") {
 		t.Fatalf("unexpected jira sync dry-run output: %s", stdout.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "jira", "sync", itemID}); code != 0 {
+		t.Fatalf("jira sync exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "synced "+itemID+" with Jira ABC-123 direction=push") {
+		t.Fatalf("unexpected jira sync output: %s", stdout.String())
+	}
+	if !transitionCalled {
+		t.Fatalf("expected jira transition API call during sync")
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "jira", "comment", itemID, "--summary", "ready for review"}); code != 0 {
+		t.Fatalf("jira comment exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "commented on Jira ABC-123 from "+itemID) {
+		t.Fatalf("unexpected jira comment output: %s", stdout.String())
+	}
+	if !commentCalled {
+		t.Fatalf("expected jira comment API call")
 	}
 }
 

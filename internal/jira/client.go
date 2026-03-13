@@ -44,6 +44,12 @@ type UpdateIssueInput struct {
 	Description string
 }
 
+type Transition struct {
+	ID   string
+	Name string
+	To   string
+}
+
 func (c Client) GetIssue(ctx context.Context, issueKey string) (Issue, error) {
 	path := fmt.Sprintf("/rest/api/3/issue/%s?fields=summary,description,issuetype,priority,status,updated", url.PathEscape(strings.TrimSpace(issueKey)))
 	var payload struct {
@@ -130,6 +136,49 @@ func (c Client) UpdateIssue(ctx context.Context, issueKey string, input UpdateIs
 
 	path := fmt.Sprintf("/rest/api/3/issue/%s", url.PathEscape(strings.TrimSpace(issueKey)))
 	return c.doJSON(ctx, http.MethodPut, path, body, nil)
+}
+
+func (c Client) GetTransitions(ctx context.Context, issueKey string) ([]Transition, error) {
+	path := fmt.Sprintf("/rest/api/3/issue/%s/transitions", url.PathEscape(strings.TrimSpace(issueKey)))
+	var payload struct {
+		Transitions []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+			To   struct {
+				Name string `json:"name"`
+			} `json:"to"`
+		} `json:"transitions"`
+	}
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, &payload); err != nil {
+		return nil, err
+	}
+	result := make([]Transition, 0, len(payload.Transitions))
+	for _, transition := range payload.Transitions {
+		result = append(result, Transition{
+			ID:   strings.TrimSpace(transition.ID),
+			Name: strings.TrimSpace(transition.Name),
+			To:   strings.TrimSpace(transition.To.Name),
+		})
+	}
+	return result, nil
+}
+
+func (c Client) TransitionIssue(ctx context.Context, issueKey, transitionID string) error {
+	path := fmt.Sprintf("/rest/api/3/issue/%s/transitions", url.PathEscape(strings.TrimSpace(issueKey)))
+	body := map[string]any{
+		"transition": map[string]any{
+			"id": transitionID,
+		},
+	}
+	return c.doJSON(ctx, http.MethodPost, path, body, nil)
+}
+
+func (c Client) AddComment(ctx context.Context, issueKey, bodyText string) error {
+	path := fmt.Sprintf("/rest/api/3/issue/%s/comment", url.PathEscape(strings.TrimSpace(issueKey)))
+	body := map[string]any{
+		"body": adfDocument(bodyText),
+	}
+	return c.doJSON(ctx, http.MethodPost, path, body, nil)
 }
 
 func (c Client) doJSON(ctx context.Context, method, path string, body any, out any) error {

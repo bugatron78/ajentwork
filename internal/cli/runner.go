@@ -173,8 +173,8 @@ func (r Runner) renderRootHelp(format domain.OutputFormat) (int, error) {
 		return 0, err
 	case domain.FormatJSON:
 		payload := struct {
-			Doc      help.Doc               `json:"doc"`
-			Commands []help.CommandSummary  `json:"commands"`
+			Doc      help.Doc              `json:"doc"`
+			Commands []help.CommandSummary `json:"commands"`
 		}{Doc: doc, Commands: commands}
 		return r.renderJSON(payload)
 	default:
@@ -1293,6 +1293,8 @@ func (r Runner) runJira(globals globalOptions, args []string) (int, error) {
 		return r.runJiraLink(globals, args[1:])
 	case "sync":
 		return r.runJiraSync(globals, args[1:])
+	case "comment":
+		return r.runJiraComment(globals, args[1:])
 	default:
 		return 2, fmt.Errorf("unknown jira subcommand %q\ntry: aj jira --help", args[0])
 	}
@@ -1502,6 +1504,58 @@ func (r Runner) runJiraSync(globals globalOptions, args []string) (int, error) {
 		return 0, err
 	case domain.FormatJSON:
 		return r.renderJSON(result)
+	default:
+		return 2, fmt.Errorf("unsupported format %q", globals.format)
+	}
+}
+
+func (r Runner) runJiraComment(globals globalOptions, args []string) (int, error) {
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			return r.renderCommandHelp("jira", globals.format)
+		}
+	}
+	if len(args) == 0 {
+		return 2, errors.New("usage: aj jira comment <id> --summary <summary>")
+	}
+
+	itemID := args[0]
+	summary := ""
+	for i := 1; i < len(args); i++ {
+		switch args[i] {
+		case "--summary":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --summary")
+			}
+			summary = args[i]
+		default:
+			return 2, fmt.Errorf("unknown option for jira comment: %s", args[i])
+		}
+	}
+	if strings.TrimSpace(summary) == "" {
+		return 2, errors.New("usage: aj jira comment <id> --summary <summary>")
+	}
+
+	service := app.CommentJiraIssueService{}
+	item, err := service.Run(app.CommentJiraIssueInput{
+		RepoPath: globals.repoPath,
+		ItemID:   itemID,
+		Summary:  summary,
+	})
+	if err != nil {
+		return 1, err
+	}
+
+	switch globals.format {
+	case domain.FormatBrief:
+		_, err = fmt.Fprintf(r.stdout, "commented on Jira %s from %s\n", item.Jira.Key, item.ID)
+		return 0, err
+	case domain.FormatPrompt:
+		_, err = fmt.Fprintf(r.stdout, "Status: commented on Jira\nID: %s\nJira: %s\nSummary: %s\n", item.ID, item.Jira.Key, summary)
+		return 0, err
+	case domain.FormatJSON:
+		return r.renderJSON(item)
 	default:
 		return 2, fmt.Errorf("unsupported format %q", globals.format)
 	}

@@ -1,0 +1,11 @@
+id = "W-LFMELQ98"
+kind = "feature"
+title = "Implement Jira milestone comments and status transitions"
+status = "done"
+priority = 0
+created_at = "2026-03-13T17:29:32Z"
+updated_at = "2026-03-13T17:45:59Z"
+goal = "let linked aj items publish concise progress updates and status changes back to Jira"
+summary = "jira adapter now supports milestone comments plus status transitions during sync"
+next_action = ""
+depends_on = []

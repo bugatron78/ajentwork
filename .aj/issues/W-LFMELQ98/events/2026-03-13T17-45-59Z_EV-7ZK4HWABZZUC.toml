@@ -1,0 +1,6 @@
+id = "EV-7ZK4HWABZZUC"
+item_id = "W-LFMELQ98"
+type = "done"
+at = "2026-03-13T17:45:59Z"
+actor = "system"
+summary = "jira adapter now supports milestone comments plus status transitions during sync"

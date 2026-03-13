@@ -18,12 +18,12 @@ import (
 )
 
 type CreateItemOptions struct {
-	RepoPath    string
-	Kind        domain.ItemKind
-	Title       string
-	Goal        string
-	NextAction  string
-	Priority    int
+	RepoPath   string
+	Kind       domain.ItemKind
+	Title      string
+	Goal       string
+	NextAction string
+	Priority   int
 }
 
 type UpdateItemOptions struct {
@@ -136,6 +136,12 @@ type SyncJiraIssueResult struct {
 	Item      domain.Item `json:"item"`
 	Direction string      `json:"direction"`
 	DryRun    bool        `json:"dry_run"`
+}
+
+type CommentJiraIssueOptions struct {
+	RepoPath string
+	ItemID   string
+	Summary  string
 }
 
 type NextItemResult struct {
@@ -828,6 +834,19 @@ func SyncJiraIssue(opts SyncJiraIssueOptions) (SyncJiraIssueResult, error) {
 
 	switch direction {
 	case "push":
+		if targetStatusName := desiredJiraStatusName(item.Status, settings.StatusMap); targetStatusName != "" && !jiraStatusMatches(remoteIssue.Status, targetStatusName) {
+			transitions, err := client.GetTransitions(context.Background(), item.Jira.Key)
+			if err != nil {
+				return SyncJiraIssueResult{}, err
+			}
+			transition, ok := findJiraTransition(transitions, targetStatusName)
+			if !ok {
+				return SyncJiraIssueResult{}, fmt.Errorf("no Jira transition available from %q to %q for %s", remoteIssue.Status, targetStatusName, item.Jira.Key)
+			}
+			if err := client.TransitionIssue(context.Background(), item.Jira.Key, transition.ID); err != nil {
+				return SyncJiraIssueResult{}, err
+			}
+		}
 		if err := client.UpdateIssue(context.Background(), item.Jira.Key, jira.UpdateIssueInput{
 			Summary:     item.Title,
 			Description: jiraDescriptionForItem(item),
@@ -877,6 +896,48 @@ func SyncJiraIssue(opts SyncJiraIssueOptions) (SyncJiraIssueResult, error) {
 		Direction: direction,
 		DryRun:    false,
 	}, nil
+}
+
+func CommentJiraIssue(opts CommentJiraIssueOptions) (domain.Item, error) {
+	if strings.TrimSpace(opts.ItemID) == "" {
+		return domain.Item{}, errors.New("item id is required")
+	}
+	if strings.TrimSpace(opts.Summary) == "" {
+		return domain.Item{}, errors.New("summary is required")
+	}
+
+	item, itemDir, err := loadItemForMutation(opts.RepoPath, opts.ItemID)
+	if err != nil {
+		return domain.Item{}, err
+	}
+	if item.Jira == nil || strings.TrimSpace(item.Jira.Key) == "" {
+		return domain.Item{}, fmt.Errorf("item %s is not linked to Jira", item.ID)
+	}
+
+	settings, err := config.ResolveJiraSettings(opts.RepoPath)
+	if err != nil {
+		return domain.Item{}, err
+	}
+	client := jira.Client{
+		BaseURL:    settings.BaseURL,
+		Email:      settings.Email,
+		APIToken:   settings.APIToken,
+		HTTPClient: jira.DefaultHTTPClient,
+	}
+	if err := client.AddComment(context.Background(), item.Jira.Key, strings.TrimSpace(opts.Summary)); err != nil {
+		return domain.Item{}, err
+	}
+
+	now := time.Now().UTC().Truncate(time.Second)
+	item.UpdatedAt = now
+	if item.Jira != nil {
+		item.Jira.SyncState = "clean"
+		item.Jira.LastSyncedAt = &now
+	}
+	if err := persistItemMutationWithEventSummary(itemDir, item, "commented_external", "system", fmt.Sprintf("commented on Jira %s: %s", item.Jira.Key, strings.TrimSpace(opts.Summary))); err != nil {
+		return domain.Item{}, err
+	}
+	return item, nil
 }
 
 func ListItems(repoPath string) ([]domain.Item, error) {
@@ -1370,6 +1431,36 @@ func markJiraDirtyLocal(item *domain.Item) {
 		return
 	}
 	item.Jira.SyncState = "dirty_local"
+}
+
+func desiredJiraStatusName(status domain.Status, statusMap map[string]domain.Status) string {
+	if len(statusMap) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(statusMap))
+	for jiraStatus := range statusMap {
+		keys = append(keys, jiraStatus)
+	}
+	sort.Strings(keys)
+	for _, jiraStatus := range keys {
+		if statusMap[jiraStatus] == status {
+			return jiraStatus
+		}
+	}
+	return ""
+}
+
+func jiraStatusMatches(current, desired string) bool {
+	return strings.EqualFold(strings.TrimSpace(current), strings.TrimSpace(desired))
+}
+
+func findJiraTransition(transitions []jira.Transition, desiredStatus string) (jira.Transition, bool) {
+	for _, transition := range transitions {
+		if jiraStatusMatches(transition.To, desiredStatus) || jiraStatusMatches(transition.Name, desiredStatus) {
+			return transition, true
+		}
+	}
+	return jira.Transition{}, false
 }
 
 func loadItemForMutation(repoPath, itemID string) (domain.Item, string, error) {

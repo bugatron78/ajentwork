@@ -62,7 +62,10 @@ The first Jira adapter slice supports:
 - `aj jira push <id> [--project <key>] [--type <name>]`
 - `aj jira link <id> <key>`
 - `aj jira sync <id> [--dry-run] [--resolve keep-local|keep-remote]`
+- `aj jira comment <id> --summary "..."`
 - `aj take jira <key> --agent <name>`
+
+`aj jira sync` will also try to move the remote Jira issue to the mapped Jira status when the local `aj` item status has changed and Jira exposes a matching transition.
 
 Set credentials through environment variables:
 

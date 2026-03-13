@@ -590,6 +590,22 @@ func TestImportAndExportJiraIssue(t *testing.T) {
 			return testJSONResponse(http.StatusUnauthorized, "unauthorized"), nil
 		}
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/api/3/issue/ABC-123/transitions":
+			payload, _ := json.Marshal(map[string]any{
+				"transitions": []any{
+					map[string]any{
+						"id":   "31",
+						"name": "Start progress",
+						"to":   map[string]any{"name": "In Progress"},
+					},
+					map[string]any{
+						"id":   "41",
+						"name": "Done",
+						"to":   map[string]any{"name": "Done"},
+					},
+				},
+			})
+			return testJSONResponse(http.StatusOK, string(payload)), nil
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/rest/api/3/issue/ABC-123"):
 			payload, _ := json.Marshal(map[string]any{
 				"key":  "ABC-123",
@@ -694,12 +710,30 @@ func TestLinkAndSyncJiraIssue(t *testing.T) {
 	remoteUpdated := "2026-03-13T12:00:00.000+0000"
 	remoteSummary := "Linked Jira summary"
 	remoteDescription := "Remote Jira description"
+	remoteStatus := "To Do"
+	transitionCalled := false
 	jira.DefaultHTTPClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		wantAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte("agent@example.com:secret"))
 		if r.Header.Get("Authorization") != wantAuth {
 			return testJSONResponse(http.StatusUnauthorized, "unauthorized"), nil
 		}
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/api/3/issue/ABC-123/transitions":
+			payload, _ := json.Marshal(map[string]any{
+				"transitions": []any{
+					map[string]any{
+						"id":   "31",
+						"name": "Start progress",
+						"to":   map[string]any{"name": "In Progress"},
+					},
+					map[string]any{
+						"id":   "41",
+						"name": "Done",
+						"to":   map[string]any{"name": "Done"},
+					},
+				},
+			})
+			return testJSONResponse(http.StatusOK, string(payload)), nil
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/rest/api/3/issue/ABC-123"):
 			payload, _ := json.Marshal(map[string]any{
 				"key":  "ABC-123",
@@ -720,11 +754,23 @@ func TestLinkAndSyncJiraIssue(t *testing.T) {
 					},
 					"issuetype": map[string]any{"name": "Task"},
 					"priority":  map[string]any{"name": "Medium"},
-					"status":    map[string]any{"name": "To Do"},
+					"status":    map[string]any{"name": remoteStatus},
 					"updated":   remoteUpdated,
 				},
 			})
 			return testJSONResponse(http.StatusOK, string(payload)), nil
+		case r.Method == http.MethodPost && r.URL.Path == "/rest/api/3/issue/ABC-123/transitions":
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode transition payload: %v", err)
+			}
+			transition := payload["transition"].(map[string]any)
+			if transition["id"] != "31" {
+				t.Fatalf("unexpected transition payload: %#v", payload)
+			}
+			transitionCalled = true
+			remoteStatus = "In Progress"
+			return testJSONResponse(http.StatusNoContent, ""), nil
 		case r.Method == http.MethodPut && r.URL.Path == "/rest/api/3/issue/ABC-123":
 			var payload map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
@@ -769,6 +815,18 @@ func TestLinkAndSyncJiraIssue(t *testing.T) {
 		t.Fatalf("expected dirty_local linked jira metadata, got %#v", linked.Item.Jira)
 	}
 
+	status := domain.StatusInProgress
+	next := "Keep the local and Jira states aligned"
+	if _, err := UpdateItem(UpdateItemOptions{
+		RepoPath:   repo,
+		ItemID:     item.ID,
+		Summary:    "started linked work",
+		NextAction: &next,
+		Status:     &status,
+	}); err != nil {
+		t.Fatalf("update local item before sync: %v", err)
+	}
+
 	dryRun, err := SyncJiraIssue(SyncJiraIssueOptions{
 		RepoPath: repo,
 		ItemID:   item.ID,
@@ -791,11 +849,14 @@ func TestLinkAndSyncJiraIssue(t *testing.T) {
 	if synced.Direction != "push" || synced.Item.Jira.SyncState != "clean" {
 		t.Fatalf("unexpected sync result: %#v", synced)
 	}
+	if !transitionCalled {
+		t.Fatalf("expected jira status transition during sync push")
+	}
 
 	remoteSummary = "Remote changed summary"
 	remoteDescription = "Remote changed description"
 	remoteUpdated = "2026-03-13T14:00:00.000+0000"
-	next := "Local follow-up"
+	next = "Local follow-up"
 	if _, err := UpdateItem(UpdateItemOptions{
 		RepoPath:   repo,
 		ItemID:     item.ID,
@@ -822,6 +883,92 @@ func TestLinkAndSyncJiraIssue(t *testing.T) {
 	}
 	if resolved.Direction != "pull" || resolved.Item.Title != "Remote changed summary" {
 		t.Fatalf("unexpected resolved sync result: %#v", resolved)
+	}
+}
+
+func TestCommentJiraIssue(t *testing.T) {
+	repo := t.TempDir()
+	if _, err := InitRepo(InitOptions{RepoPath: repo}); err != nil {
+		t.Fatalf("init repo: %v", err)
+	}
+
+	oldClient := jira.DefaultHTTPClient
+	defer func() { jira.DefaultHTTPClient = oldClient }()
+
+	commentCalled := false
+	jira.DefaultHTTPClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		wantAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte("agent@example.com:secret"))
+		if r.Header.Get("Authorization") != wantAuth {
+			return testJSONResponse(http.StatusUnauthorized, "unauthorized"), nil
+		}
+		switch {
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/rest/api/3/issue/ABC-123"):
+			payload, _ := json.Marshal(map[string]any{
+				"key":  "ABC-123",
+				"self": "https://example.atlassian.net/rest/api/3/issue/10000",
+				"fields": map[string]any{
+					"summary":   "Linked Jira summary",
+					"issuetype": map[string]any{"name": "Task"},
+					"priority":  map[string]any{"name": "Medium"},
+					"status":    map[string]any{"name": "To Do"},
+					"updated":   "2026-03-13T12:00:00.000+0000",
+				},
+			})
+			return testJSONResponse(http.StatusOK, string(payload)), nil
+		case r.Method == http.MethodPost && r.URL.Path == "/rest/api/3/issue/ABC-123/comment":
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode comment payload: %v", err)
+			}
+			commentBody := payload["body"].(map[string]any)
+			if commentBody["type"] != "doc" {
+				t.Fatalf("unexpected comment body: %#v", payload)
+			}
+			commentCalled = true
+			return testJSONResponse(http.StatusCreated, `{"id":"10001"}`), nil
+		default:
+			return testJSONResponse(http.StatusNotFound, "not found"), nil
+		}
+	})}
+
+	writeJiraTestConfig(t, repo, "https://example.atlassian.net", "ABC")
+	t.Setenv("AJ_JIRA_EMAIL", "agent@example.com")
+	t.Setenv("AJ_JIRA_API_TOKEN", "secret")
+
+	item, err := CreateItem(CreateItemOptions{
+		RepoPath:   repo,
+		Kind:       domain.KindTask,
+		Title:      "Comment me",
+		Goal:       "Send a Jira milestone comment",
+		NextAction: "Link the item",
+		Priority:   1,
+	})
+	if err != nil {
+		t.Fatalf("create item: %v", err)
+	}
+
+	linked, err := LinkJiraIssue(LinkJiraIssueOptions{
+		RepoPath: repo,
+		ItemID:   item.ID,
+		IssueKey: "ABC-123",
+	})
+	if err != nil {
+		t.Fatalf("link jira issue: %v", err)
+	}
+
+	commented, err := CommentJiraIssue(CommentJiraIssueOptions{
+		RepoPath: repo,
+		ItemID:   linked.Item.ID,
+		Summary:  "Ready for review",
+	})
+	if err != nil {
+		t.Fatalf("comment jira issue: %v", err)
+	}
+	if !commentCalled {
+		t.Fatalf("expected jira comment API call")
+	}
+	if commented.Jira == nil || commented.Jira.SyncState != "clean" {
+		t.Fatalf("expected clean jira state after comment, got %#v", commented.Jira)
 	}
 }
 

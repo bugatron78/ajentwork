@@ -328,3 +328,19 @@ func (s SyncJiraIssueService) Run(input SyncJiraIssueInput) (store.SyncJiraIssue
 		Resolve:  input.Resolve,
 	})
 }
+
+type CommentJiraIssueInput struct {
+	RepoPath string
+	ItemID   string
+	Summary  string
+}
+
+type CommentJiraIssueService struct{}
+
+func (s CommentJiraIssueService) Run(input CommentJiraIssueInput) (domain.Item, error) {
+	return store.CommentJiraIssue(store.CommentJiraIssueOptions{
+		RepoPath: input.RepoPath,
+		ItemID:   input.ItemID,
+		Summary:  input.Summary,
+	})
+}
