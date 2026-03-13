@@ -23,6 +23,8 @@ Install the latest release binary:
 curl -fsSL https://raw.githubusercontent.com/bugatron78/ajentwork/main/scripts/install.sh | bash
 ```
 
+The installer downloads the matching release artifact and verifies its SHA-256 checksum before installing.
+
 Install a specific version:
 
 ```bash

@@ -19,6 +19,46 @@ Examples:
 EOF
 }
 
+compute_sha256() {
+  local file
+  file="$1"
+
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$file" | awk '{print $1}'
+    return
+  fi
+
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$file" | awk '{print $1}'
+    return
+  fi
+
+  echo "missing checksum tool: need shasum or sha256sum" >&2
+  exit 1
+}
+
+verify_archive_checksum() {
+  local archive_path checksums_path expected actual
+  archive_path="$1"
+  checksums_path="$2"
+
+  expected="$(awk -v name="$ARCHIVE_NAME" '$2 == name { print $1 }' "$checksums_path")"
+  if [[ -z "$expected" ]]; then
+    echo "failed to find checksum for $ARCHIVE_NAME in $(basename "$checksums_path")" >&2
+    exit 1
+  fi
+
+  actual="$(compute_sha256 "$archive_path")"
+  if [[ "$actual" != "$expected" ]]; then
+    echo "checksum mismatch for $ARCHIVE_NAME" >&2
+    echo "expected: $expected" >&2
+    echo "actual:   $actual" >&2
+    exit 1
+  fi
+
+  echo "Verified checksum for $ARCHIVE_NAME"
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --version)
@@ -85,12 +125,18 @@ if [[ -z "$VERSION" ]]; then
 fi
 
 ARCHIVE_NAME="aj_${VERSION}_${GOOS}_${GOARCH}.tar.gz"
+CHECKSUMS_NAME="aj_${VERSION}_checksums.txt"
 DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${VERSION}/${ARCHIVE_NAME}"
+CHECKSUMS_URL="https://github.com/${REPO}/releases/download/${VERSION}/${CHECKSUMS_NAME}"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 echo "Downloading ${DOWNLOAD_URL}"
 curl -fsSL "$DOWNLOAD_URL" -o "$TMP_DIR/$ARCHIVE_NAME"
+echo "Downloading ${CHECKSUMS_URL}"
+curl -fsSL "$CHECKSUMS_URL" -o "$TMP_DIR/$CHECKSUMS_NAME"
+
+verify_archive_checksum "$TMP_DIR/$ARCHIVE_NAME" "$TMP_DIR/$CHECKSUMS_NAME"
 
 tar -xzf "$TMP_DIR/$ARCHIVE_NAME" -C "$TMP_DIR"
 

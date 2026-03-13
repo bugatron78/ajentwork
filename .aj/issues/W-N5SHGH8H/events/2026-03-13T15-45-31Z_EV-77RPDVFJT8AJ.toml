@@ -1,0 +1,6 @@
+id = "EV-77RPDVFJT8AJ"
+item_id = "W-N5SHGH8H"
+type = "updated"
+at = "2026-03-13T15:45:31Z"
+actor = "system"
+summary = "installer now verifies release checksums before extraction"
