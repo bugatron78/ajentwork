@@ -698,6 +698,29 @@ func TestImportAndExportJiraIssue(t *testing.T) {
 	}
 }
 
+func TestShowJiraStatusMap(t *testing.T) {
+	repo := t.TempDir()
+	if _, err := InitRepo(InitOptions{RepoPath: repo}); err != nil {
+		t.Fatalf("init repo: %v", err)
+	}
+
+	writeJiraTestConfig(t, repo, "https://example.atlassian.net", "ABC")
+
+	result, err := ShowJiraStatusMap(repo)
+	if err != nil {
+		t.Fatalf("show jira status map: %v", err)
+	}
+	if !result.Enabled || result.BaseURL != "https://example.atlassian.net" || result.Project != "ABC" {
+		t.Fatalf("unexpected jira status map header: %#v", result)
+	}
+	if len(result.Entries) == 0 {
+		t.Fatalf("expected jira status mappings")
+	}
+	if result.Entries[0].JiraStatus != "Blocked" || result.Entries[0].LocalStatus != domain.StatusBlocked {
+		t.Fatalf("expected sorted jira status map entries, got %#v", result.Entries[0])
+	}
+}
+
 func TestLinkAndSyncJiraIssue(t *testing.T) {
 	repo := t.TempDir()
 	if _, err := InitRepo(InitOptions{RepoPath: repo}); err != nil {
@@ -883,6 +906,103 @@ func TestLinkAndSyncJiraIssue(t *testing.T) {
 	}
 	if resolved.Direction != "pull" || resolved.Item.Title != "Remote changed summary" {
 		t.Fatalf("unexpected resolved sync result: %#v", resolved)
+	}
+}
+
+func TestShowJiraTransitions(t *testing.T) {
+	repo := t.TempDir()
+	if _, err := InitRepo(InitOptions{RepoPath: repo}); err != nil {
+		t.Fatalf("init repo: %v", err)
+	}
+
+	oldClient := jira.DefaultHTTPClient
+	defer func() { jira.DefaultHTTPClient = oldClient }()
+
+	jira.DefaultHTTPClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		wantAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte("agent@example.com:secret"))
+		if r.Header.Get("Authorization") != wantAuth {
+			return testJSONResponse(http.StatusUnauthorized, "unauthorized"), nil
+		}
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/api/3/issue/ABC-123/transitions":
+			payload, _ := json.Marshal(map[string]any{
+				"transitions": []any{
+					map[string]any{
+						"id":   "31",
+						"name": "Start progress",
+						"to":   map[string]any{"name": "In Progress"},
+					},
+					map[string]any{
+						"id":   "41",
+						"name": "Done",
+						"to":   map[string]any{"name": "Done"},
+					},
+				},
+			})
+			return testJSONResponse(http.StatusOK, string(payload)), nil
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/rest/api/3/issue/ABC-123"):
+			payload, _ := json.Marshal(map[string]any{
+				"key":  "ABC-123",
+				"self": "https://example.atlassian.net/rest/api/3/issue/10000",
+				"fields": map[string]any{
+					"summary":   "Linked Jira summary",
+					"issuetype": map[string]any{"name": "Task"},
+					"priority":  map[string]any{"name": "Medium"},
+					"status":    map[string]any{"name": "To Do"},
+					"updated":   "2026-03-13T12:00:00.000+0000",
+				},
+			})
+			return testJSONResponse(http.StatusOK, string(payload)), nil
+		default:
+			return testJSONResponse(http.StatusNotFound, "not found"), nil
+		}
+	})}
+
+	writeJiraTestConfig(t, repo, "https://example.atlassian.net", "ABC")
+	t.Setenv("AJ_JIRA_EMAIL", "agent@example.com")
+	t.Setenv("AJ_JIRA_API_TOKEN", "secret")
+
+	item, err := CreateItem(CreateItemOptions{
+		RepoPath:   repo,
+		Kind:       domain.KindTask,
+		Title:      "Transition diagnostics",
+		Goal:       "Inspect live Jira workflow options",
+		NextAction: "Link the item",
+		Priority:   1,
+	})
+	if err != nil {
+		t.Fatalf("create item: %v", err)
+	}
+
+	if _, err := LinkJiraIssue(LinkJiraIssueOptions{
+		RepoPath: repo,
+		ItemID:   item.ID,
+		IssueKey: "ABC-123",
+	}); err != nil {
+		t.Fatalf("link jira issue: %v", err)
+	}
+
+	status := domain.StatusInProgress
+	next := "Run the transitions command"
+	if _, err := UpdateItem(UpdateItemOptions{
+		RepoPath:   repo,
+		ItemID:     item.ID,
+		Summary:    "local status changed",
+		NextAction: &next,
+		Status:     &status,
+	}); err != nil {
+		t.Fatalf("update local item: %v", err)
+	}
+
+	result, err := ShowJiraTransitions(repo, item.ID)
+	if err != nil {
+		t.Fatalf("show jira transitions: %v", err)
+	}
+	if result.RemoteStatus != "To Do" || result.DesiredStatus != "In Progress" || !result.CanTransition {
+		t.Fatalf("unexpected transitions result header: %#v", result)
+	}
+	if len(result.Available) != 2 || !result.Available[0].MatchesDesired {
+		t.Fatalf("unexpected transitions result entries: %#v", result.Available)
 	}
 }
 

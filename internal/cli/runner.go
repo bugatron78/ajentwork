@@ -1295,6 +1295,10 @@ func (r Runner) runJira(globals globalOptions, args []string) (int, error) {
 		return r.runJiraSync(globals, args[1:])
 	case "comment":
 		return r.runJiraComment(globals, args[1:])
+	case "status-map":
+		return r.runJiraStatusMap(globals, args[1:])
+	case "transitions":
+		return r.runJiraTransitions(globals, args[1:])
 	default:
 		return 2, fmt.Errorf("unknown jira subcommand %q\ntry: aj jira --help", args[0])
 	}
@@ -1556,6 +1560,69 @@ func (r Runner) runJiraComment(globals globalOptions, args []string) (int, error
 		return 0, err
 	case domain.FormatJSON:
 		return r.renderJSON(item)
+	default:
+		return 2, fmt.Errorf("unsupported format %q", globals.format)
+	}
+}
+
+func (r Runner) runJiraStatusMap(globals globalOptions, args []string) (int, error) {
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			return r.renderCommandHelp("jira", globals.format)
+		}
+	}
+	if len(args) != 0 {
+		return 2, errors.New("usage: aj jira status-map")
+	}
+
+	service := app.JiraStatusMapService{}
+	result, err := service.Run(globals.repoPath)
+	if err != nil {
+		return 1, err
+	}
+
+	switch globals.format {
+	case domain.FormatBrief:
+		_, err = fmt.Fprintln(r.stdout, render.JiraStatusMapBrief(result))
+		return 0, err
+	case domain.FormatPrompt:
+		_, err = fmt.Fprintln(r.stdout, render.JiraStatusMapPrompt(result))
+		return 0, err
+	case domain.FormatJSON:
+		return r.renderJSON(result)
+	default:
+		return 2, fmt.Errorf("unsupported format %q", globals.format)
+	}
+}
+
+func (r Runner) runJiraTransitions(globals globalOptions, args []string) (int, error) {
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			return r.renderCommandHelp("jira", globals.format)
+		}
+	}
+	if len(args) != 1 {
+		return 2, errors.New("usage: aj jira transitions <id>")
+	}
+
+	service := app.JiraTransitionsService{}
+	result, err := service.Run(app.JiraTransitionsInput{
+		RepoPath: globals.repoPath,
+		ItemID:   args[0],
+	})
+	if err != nil {
+		return 1, err
+	}
+
+	switch globals.format {
+	case domain.FormatBrief:
+		_, err = fmt.Fprintln(r.stdout, render.JiraTransitionsBrief(result))
+		return 0, err
+	case domain.FormatPrompt:
+		_, err = fmt.Fprintln(r.stdout, render.JiraTransitionsPrompt(result))
+		return 0, err
+	case domain.FormatJSON:
+		return r.renderJSON(result)
 	default:
 		return 2, fmt.Errorf("unsupported format %q", globals.format)
 	}

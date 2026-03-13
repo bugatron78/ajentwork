@@ -1,0 +1,6 @@
+id = "EV-GHKSK6FY5KEA"
+item_id = "W-9YVNBPEF"
+type = "done"
+at = "2026-03-13T18:27:59Z"
+actor = "system"
+summary = "jira status-map and transitions diagnostics are implemented and verified"

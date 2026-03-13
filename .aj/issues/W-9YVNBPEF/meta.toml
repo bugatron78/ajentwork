@@ -1,0 +1,11 @@
+id = "W-9YVNBPEF"
+kind = "feature"
+title = "Implement Jira transition diagnostics"
+status = "done"
+priority = 1
+created_at = "2026-03-13T18:09:48Z"
+updated_at = "2026-03-13T18:27:59Z"
+goal = "let agents inspect Jira status mappings and available transitions before syncing"
+summary = "jira status-map and transitions diagnostics are implemented and verified"
+next_action = ""
+depends_on = []

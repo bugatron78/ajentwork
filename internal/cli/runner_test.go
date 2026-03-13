@@ -635,6 +635,111 @@ func TestRunnerJiraLinkSyncAndComment(t *testing.T) {
 	}
 }
 
+func TestRunnerJiraStatusMapAndTransitions(t *testing.T) {
+	repo := t.TempDir()
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	runner := NewRunner(stdout, stderr)
+
+	if code := runner.Run([]string{"--repo", repo, "init"}); code != 0 {
+		t.Fatalf("init exit code = %d, stderr = %s", code, stderr.String())
+	}
+
+	oldClient := jira.DefaultHTTPClient
+	defer func() { jira.DefaultHTTPClient = oldClient }()
+
+	jira.DefaultHTTPClient = &http.Client{Transport: runnerRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+		wantAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte("agent@example.com:secret"))
+		if r.Header.Get("Authorization") != wantAuth {
+			return runnerJSONResponse(http.StatusUnauthorized, "unauthorized"), nil
+		}
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/api/3/issue/ABC-123/transitions":
+			payload, _ := json.Marshal(map[string]any{
+				"transitions": []any{
+					map[string]any{
+						"id":   "31",
+						"name": "In Progress",
+						"to":   map[string]any{"name": "In Progress"},
+					},
+					map[string]any{
+						"id":   "41",
+						"name": "Done",
+						"to":   map[string]any{"name": "Done"},
+					},
+				},
+			})
+			return runnerJSONResponse(http.StatusOK, string(payload)), nil
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/rest/api/3/issue/ABC-123"):
+			payload, _ := json.Marshal(map[string]any{
+				"key":  "ABC-123",
+				"self": "https://example.atlassian.net/rest/api/3/issue/10000",
+				"fields": map[string]any{
+					"summary":   "Diagnostic issue",
+					"issuetype": map[string]any{"name": "Task"},
+					"priority":  map[string]any{"name": "Medium"},
+					"status":    map[string]any{"name": "To Do"},
+					"updated":   "2026-03-13T12:00:00.000+0000",
+				},
+			})
+			return runnerJSONResponse(http.StatusOK, string(payload)), nil
+		default:
+			return runnerJSONResponse(http.StatusNotFound, "not found"), nil
+		}
+	})}
+
+	writeRunnerJiraTestConfig(t, repo, "https://example.atlassian.net", "ABC")
+	t.Setenv("AJ_JIRA_EMAIL", "agent@example.com")
+	t.Setenv("AJ_JIRA_API_TOKEN", "secret")
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "jira", "status-map"}); code != 0 {
+		t.Fatalf("jira status-map exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Blocked -> blocked") || !strings.Contains(stdout.String(), "Project: ABC") {
+		t.Fatalf("unexpected jira status-map output: %s", stdout.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "new", "--kind", "task", "--title", "Diagnose transitions", "--goal", "Inspect jira transitions", "--next", "Link the item"}); code != 0 {
+		t.Fatalf("new exit code = %d, stderr = %s", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "ls", "--format", "json"}); code != 0 {
+		t.Fatalf("ls json exit code = %d, stderr = %s", code, stderr.String())
+	}
+	var items []map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &items); err != nil {
+		t.Fatalf("unmarshal list json: %v", err)
+	}
+	itemID := items[0]["id"].(string)
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "jira", "link", itemID, "ABC-123"}); code != 0 {
+		t.Fatalf("jira link exit code = %d, stderr = %s", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "update", itemID, "--summary", "started work", "--status", "in_progress", "--next", "Inspect live transitions"}); code != 0 {
+		t.Fatalf("update exit code = %d, stderr = %s", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "jira", "transitions", itemID}); code != 0 {
+		t.Fatalf("jira transitions exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Desired Jira Status: In Progress") || !strings.Contains(stdout.String(), "[matches desired]") {
+		t.Fatalf("unexpected jira transitions output: %s", stdout.String())
+	}
+}
+
 func writeRunnerJiraTestConfig(t *testing.T, repo, baseURL, project string) {
 	t.Helper()
 	raw := `schema_version = 1

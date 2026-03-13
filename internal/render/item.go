@@ -30,7 +30,7 @@ func ItemListBrief(items []domain.Item) string {
 	for _, item := range items {
 		lease := "-"
 		if item.Lease != nil {
-			lease = "@"+item.Lease.Owner
+			lease = "@" + item.Lease.Owner
 		}
 		deps := "-"
 		if len(item.DependsOn) > 0 {
@@ -377,4 +377,95 @@ func ReadyPrompt(entries []store.ReadyEntry) string {
 		lines = append(lines, fmt.Sprintf("%s %s %s %s", entry.Reason, entry.Item.ID, entry.Item.Status, entry.Item.Title))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func JiraStatusMapBrief(result store.JiraStatusMapResult) string {
+	lines := []string{
+		fmt.Sprintf("Enabled: %t", result.Enabled),
+		fmt.Sprintf("Base URL: %s", fallbackValue(result.BaseURL)),
+		fmt.Sprintf("Project: %s", fallbackValue(result.Project)),
+	}
+	if len(result.Entries) == 0 {
+		lines = append(lines, "Mappings: none")
+		return strings.Join(lines, "\n")
+	}
+	lines = append(lines, "Mappings:")
+	for _, entry := range result.Entries {
+		lines = append(lines, fmt.Sprintf("  %s -> %s", entry.JiraStatus, entry.LocalStatus))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func JiraStatusMapPrompt(result store.JiraStatusMapResult) string {
+	lines := []string{
+		fmt.Sprintf("Enabled: %t", result.Enabled),
+		"Base URL: " + fallbackValue(result.BaseURL),
+		"Project: " + fallbackValue(result.Project),
+	}
+	if len(result.Entries) == 0 {
+		lines = append(lines, "Mappings: none")
+		return strings.Join(lines, "\n")
+	}
+	for _, entry := range result.Entries {
+		lines = append(lines, fmt.Sprintf("Map: %s -> %s", entry.JiraStatus, entry.LocalStatus))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func JiraTransitionsBrief(result store.JiraTransitionsResult) string {
+	lines := []string{
+		fmt.Sprintf("ID: %s", result.Item.ID),
+		fmt.Sprintf("Jira: %s", result.JiraKey),
+		fmt.Sprintf("Local Status: %s", result.Item.Status),
+		fmt.Sprintf("Remote Status: %s", fallbackValue(result.RemoteStatus)),
+		fmt.Sprintf("Desired Jira Status: %s", fallbackValue(result.DesiredStatus)),
+	}
+	if result.CanTransition {
+		lines = append(lines, fmt.Sprintf("Matching Transition: %s", fallbackValue(result.MatchingID)))
+	} else {
+		lines = append(lines, "Matching Transition: none")
+	}
+	if len(result.Available) == 0 {
+		lines = append(lines, "Available Transitions: none")
+		return strings.Join(lines, "\n")
+	}
+	lines = append(lines, "Available Transitions:")
+	for _, transition := range result.Available {
+		line := fmt.Sprintf("  %s %-14s -> %s", transition.ID, fallbackValue(transition.Name), fallbackValue(transition.To))
+		if transition.MatchesDesired {
+			line += " [matches desired]"
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func JiraTransitionsPrompt(result store.JiraTransitionsResult) string {
+	lines := []string{
+		"ID: " + result.Item.ID,
+		"Jira: " + result.JiraKey,
+		"Local Status: " + string(result.Item.Status),
+		"Remote Status: " + fallbackValue(result.RemoteStatus),
+		"Desired Jira Status: " + fallbackValue(result.DesiredStatus),
+		fmt.Sprintf("Can Transition: %t", result.CanTransition),
+	}
+	if result.MatchingID != "" {
+		lines = append(lines, "Matching Transition: "+result.MatchingID)
+	}
+	for _, transition := range result.Available {
+		line := fmt.Sprintf("Transition: %s %s -> %s", transition.ID, fallbackValue(transition.Name), fallbackValue(transition.To))
+		if transition.MatchesDesired {
+			line += " matches_desired=true"
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func fallbackValue(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "-"
+	}
+	return value
 }

@@ -144,6 +144,35 @@ type CommentJiraIssueOptions struct {
 	Summary  string
 }
 
+type JiraStatusMapEntry struct {
+	JiraStatus  string        `json:"jira_status"`
+	LocalStatus domain.Status `json:"local_status"`
+}
+
+type JiraStatusMapResult struct {
+	Enabled bool                 `json:"enabled"`
+	BaseURL string               `json:"base_url"`
+	Project string               `json:"project"`
+	Entries []JiraStatusMapEntry `json:"entries"`
+}
+
+type JiraTransitionEntry struct {
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	To             string `json:"to"`
+	MatchesDesired bool   `json:"matches_desired"`
+}
+
+type JiraTransitionsResult struct {
+	Item          domain.Item           `json:"item"`
+	JiraKey       string                `json:"jira_key"`
+	RemoteStatus  string                `json:"remote_status"`
+	DesiredStatus string                `json:"desired_status,omitempty"`
+	MatchingID    string                `json:"matching_id,omitempty"`
+	CanTransition bool                  `json:"can_transition"`
+	Available     []JiraTransitionEntry `json:"available"`
+}
+
 type NextItemResult struct {
 	Item      domain.Item `json:"item"`
 	Reason    string      `json:"reason"`
@@ -841,7 +870,7 @@ func SyncJiraIssue(opts SyncJiraIssueOptions) (SyncJiraIssueResult, error) {
 			}
 			transition, ok := findJiraTransition(transitions, targetStatusName)
 			if !ok {
-				return SyncJiraIssueResult{}, fmt.Errorf("no Jira transition available from %q to %q for %s", remoteIssue.Status, targetStatusName, item.Jira.Key)
+				return SyncJiraIssueResult{}, fmt.Errorf("no Jira transition available from %q to %q for %s (available: %s; try `aj jira transitions %s`)", remoteIssue.Status, targetStatusName, item.Jira.Key, strings.Join(availableTransitionNames(transitions), ", "), item.ID)
 			}
 			if err := client.TransitionIssue(context.Background(), item.Jira.Key, transition.ID); err != nil {
 				return SyncJiraIssueResult{}, err
@@ -938,6 +967,97 @@ func CommentJiraIssue(opts CommentJiraIssueOptions) (domain.Item, error) {
 		return domain.Item{}, err
 	}
 	return item, nil
+}
+
+func ShowJiraStatusMap(repoPath string) (JiraStatusMapResult, error) {
+	cfg, err := config.Load(repoPath)
+	if err != nil {
+		return JiraStatusMapResult{}, err
+	}
+
+	keys := make([]string, 0, len(cfg.Jira.StatusMap))
+	for jiraStatus := range cfg.Jira.StatusMap {
+		keys = append(keys, jiraStatus)
+	}
+	sort.Strings(keys)
+
+	entries := make([]JiraStatusMapEntry, 0, len(keys))
+	for _, jiraStatus := range keys {
+		entries = append(entries, JiraStatusMapEntry{
+			JiraStatus:  jiraStatus,
+			LocalStatus: cfg.Jira.StatusMap[jiraStatus],
+		})
+	}
+
+	return JiraStatusMapResult{
+		Enabled: cfg.Jira.Enabled,
+		BaseURL: strings.TrimSpace(cfg.Jira.BaseURL),
+		Project: strings.TrimSpace(cfg.Jira.Project),
+		Entries: entries,
+	}, nil
+}
+
+func ShowJiraTransitions(repoPath, itemID string) (JiraTransitionsResult, error) {
+	if strings.TrimSpace(itemID) == "" {
+		return JiraTransitionsResult{}, errors.New("item id is required")
+	}
+
+	item, err := GetItem(repoPath, itemID)
+	if err != nil {
+		return JiraTransitionsResult{}, err
+	}
+	if item.Jira == nil || strings.TrimSpace(item.Jira.Key) == "" {
+		return JiraTransitionsResult{}, fmt.Errorf("item %s is not linked to Jira", item.ID)
+	}
+
+	settings, err := config.ResolveJiraSettings(repoPath)
+	if err != nil {
+		return JiraTransitionsResult{}, err
+	}
+	client := jira.Client{
+		BaseURL:    settings.BaseURL,
+		Email:      settings.Email,
+		APIToken:   settings.APIToken,
+		HTTPClient: jira.DefaultHTTPClient,
+	}
+	remoteIssue, err := client.GetIssue(context.Background(), item.Jira.Key)
+	if err != nil {
+		return JiraTransitionsResult{}, err
+	}
+	transitions, err := client.GetTransitions(context.Background(), item.Jira.Key)
+	if err != nil {
+		return JiraTransitionsResult{}, err
+	}
+
+	desiredStatus := desiredJiraStatusName(item.Status, settings.StatusMap)
+	available := make([]JiraTransitionEntry, 0, len(transitions))
+	matchingID := ""
+	canTransition := false
+	for _, transition := range transitions {
+		matchesDesired := desiredStatus != "" && (jiraStatusMatches(transition.To, desiredStatus) || jiraStatusMatches(transition.Name, desiredStatus))
+		if matchesDesired && matchingID == "" {
+			matchingID = transition.ID
+		}
+		if matchesDesired {
+			canTransition = true
+		}
+		available = append(available, JiraTransitionEntry{
+			ID:             transition.ID,
+			Name:           transition.Name,
+			To:             transition.To,
+			MatchesDesired: matchesDesired,
+		})
+	}
+
+	return JiraTransitionsResult{
+		Item:          item,
+		JiraKey:       item.Jira.Key,
+		RemoteStatus:  remoteIssue.Status,
+		DesiredStatus: desiredStatus,
+		MatchingID:    matchingID,
+		CanTransition: canTransition,
+		Available:     available,
+	}, nil
 }
 
 func ListItems(repoPath string) ([]domain.Item, error) {
@@ -1461,6 +1581,25 @@ func findJiraTransition(transitions []jira.Transition, desiredStatus string) (ji
 		}
 	}
 	return jira.Transition{}, false
+}
+
+func availableTransitionNames(transitions []jira.Transition) []string {
+	if len(transitions) == 0 {
+		return []string{"none"}
+	}
+	names := make([]string, 0, len(transitions))
+	for _, transition := range transitions {
+		label := strings.TrimSpace(transition.To)
+		if label == "" {
+			label = strings.TrimSpace(transition.Name)
+		}
+		if label == "" {
+			label = strings.TrimSpace(transition.ID)
+		}
+		names = append(names, label)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func loadItemForMutation(repoPath, itemID string) (domain.Item, string, error) {

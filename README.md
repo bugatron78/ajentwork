@@ -61,11 +61,14 @@ The first Jira adapter slice supports:
 - `aj jira pull <key>`
 - `aj jira push <id> [--project <key>] [--type <name>]`
 - `aj jira link <id> <key>`
+- `aj jira status-map`
+- `aj jira transitions <id>`
 - `aj jira sync <id> [--dry-run] [--resolve keep-local|keep-remote]`
 - `aj jira comment <id> --summary "..."`
 - `aj take jira <key> --agent <name>`
 
 `aj jira sync` will also try to move the remote Jira issue to the mapped Jira status when the local `aj` item status has changed and Jira exposes a matching transition.
+Use `aj jira status-map` and `aj jira transitions <id>` to inspect the configured mapping and the live remote workflow before syncing.
 
 Set credentials through environment variables:
 

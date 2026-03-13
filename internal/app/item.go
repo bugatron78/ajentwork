@@ -329,6 +329,23 @@ func (s SyncJiraIssueService) Run(input SyncJiraIssueInput) (store.SyncJiraIssue
 	})
 }
 
+type JiraStatusMapService struct{}
+
+func (s JiraStatusMapService) Run(repoPath string) (store.JiraStatusMapResult, error) {
+	return store.ShowJiraStatusMap(repoPath)
+}
+
+type JiraTransitionsInput struct {
+	RepoPath string
+	ItemID   string
+}
+
+type JiraTransitionsService struct{}
+
+func (s JiraTransitionsService) Run(input JiraTransitionsInput) (store.JiraTransitionsResult, error) {
+	return store.ShowJiraTransitions(input.RepoPath, input.ItemID)
+}
+
 type CommentJiraIssueInput struct {
 	RepoPath string
 	ItemID   string
