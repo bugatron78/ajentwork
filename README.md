@@ -37,6 +37,23 @@ Install to a custom directory:
 curl -fsSL https://raw.githubusercontent.com/bugatron78/ajentwork/main/scripts/install.sh | bash -s -- --install-dir "$HOME/.local/bin"
 ```
 
+## Homebrew
+
+One-shot install without pre-tapping:
+
+```bash
+brew install bugatron78/ajentwork/aj
+```
+
+If you want plain `brew install aj`, tap the repo first:
+
+```bash
+brew tap bugatron78/ajentwork
+brew install aj
+```
+
+The published tap lives at `bugatron78/homebrew-ajentwork`, and the formula builds `aj` from source with Go.
+
 ## Release Artifacts
 
 Build shareable binaries for macOS and Linux:
@@ -64,10 +81,6 @@ Artifacts are written to `dist/`:
 1. Extract the archive for your platform.
 2. Move `aj` onto your `PATH`.
 3. Run `aj --help`.
-
-## Homebrew
-
-A formula template is included at `Formula/ajentwork.rb` for use in a tap-based install flow.
 
 ## Releases
 
