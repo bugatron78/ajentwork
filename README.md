@@ -1,0 +1,48 @@
+# ajentwork
+
+`ajentwork` is a local-first work tracker for AI agents, with the `aj` CLI as its primary interface.
+
+## What It Does
+
+- Tracks compact work items in a git-friendly `.aj/` directory
+- Records append-only events for item history
+- Supports leases, dependencies, queueing, history, and ready-work views
+- Can be used to dogfood the development of the tool itself
+
+## Build
+
+```bash
+go build ./cmd/aj
+```
+
+## Release Artifacts
+
+Build shareable binaries for macOS and Linux:
+
+```bash
+./scripts/build-release.sh
+```
+
+Or build for a specific version label:
+
+```bash
+./scripts/build-release.sh v0.1.0
+```
+
+Artifacts are written to `dist/`:
+
+- `aj_<version>_darwin_amd64.tar.gz`
+- `aj_<version>_darwin_arm64.tar.gz`
+- `aj_<version>_linux_amd64.tar.gz`
+- `aj_<version>_linux_arm64.tar.gz`
+- `aj_<version>_checksums.txt`
+
+## Install From An Artifact
+
+1. Extract the archive for your platform.
+2. Move `aj` onto your `PATH`.
+3. Run `aj --help`.
+
+## Releases
+
+Tagged pushes like `v0.1.0` trigger the GitHub Actions release workflow, which builds artifacts and attaches them to a GitHub Release.

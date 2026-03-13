@@ -1,0 +1,45 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build release artifacts
+        run: ./scripts/build-release.sh "${GITHUB_REF_NAME:-manual}"
+
+      - name: Create GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" dist/*.tar.gz dist/*_checksums.txt --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" dist/*.tar.gz dist/*_checksums.txt \
+              --title "${GITHUB_REF_NAME}" \
+              --notes "Automated release for ${GITHUB_REF_NAME}"
+          fi
+
+      - name: Upload build artifacts
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ajentwork-artifacts
+          path: dist/*
