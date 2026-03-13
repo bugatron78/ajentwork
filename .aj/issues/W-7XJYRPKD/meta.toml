@@ -1,0 +1,11 @@
+id = "W-7XJYRPKD"
+kind = "feature"
+title = "Add jira search"
+status = "done"
+priority = 2
+created_at = "2026-03-13T19:03:34Z"
+updated_at = "2026-03-13T19:10:01Z"
+goal = "let agents search existing Jira issues before creating or linking work"
+summary = "jira search shipped and live smoke test passed against SD"
+next_action = ""
+depends_on = []

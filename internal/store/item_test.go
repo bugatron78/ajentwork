@@ -1006,6 +1006,69 @@ func TestShowJiraTransitions(t *testing.T) {
 	}
 }
 
+func TestSearchJiraIssues(t *testing.T) {
+	repo := t.TempDir()
+	if _, err := InitRepo(InitOptions{RepoPath: repo}); err != nil {
+		t.Fatalf("init repo: %v", err)
+	}
+
+	oldClient := jira.DefaultHTTPClient
+	defer func() { jira.DefaultHTTPClient = oldClient }()
+
+	var capturedJQL string
+	jira.DefaultHTTPClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		wantAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte("agent@example.com:secret"))
+		if r.Header.Get("Authorization") != wantAuth {
+			return testJSONResponse(http.StatusUnauthorized, "unauthorized"), nil
+		}
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/rest/api/3/search/jql":
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode search payload: %v", err)
+			}
+			capturedJQL, _ = payload["jql"].(string)
+			response, _ := json.Marshal(map[string]any{
+				"issues": []any{
+					map[string]any{
+						"key":  "ABC-123",
+						"self": "https://example.atlassian.net/rest/api/3/issue/10000",
+						"fields": map[string]any{
+							"summary":   "Cache invalidation bug",
+							"issuetype": map[string]any{"name": "Bug"},
+							"priority":  map[string]any{"name": "High"},
+							"status":    map[string]any{"name": "To Do"},
+							"updated":   "2026-03-13T12:00:00.000+0000",
+						},
+					},
+				},
+			})
+			return testJSONResponse(http.StatusOK, string(response)), nil
+		default:
+			return testJSONResponse(http.StatusNotFound, "not found"), nil
+		}
+	})}
+
+	writeJiraTestConfig(t, repo, "https://example.atlassian.net", "ABC")
+	t.Setenv("AJ_JIRA_EMAIL", "agent@example.com")
+	t.Setenv("AJ_JIRA_API_TOKEN", "secret")
+
+	result, err := SearchJiraIssues(SearchJiraIssuesOptions{
+		RepoPath: repo,
+		Query:    "cache invalidation",
+		Limit:    5,
+	})
+	if err != nil {
+		t.Fatalf("search jira issues: %v", err)
+	}
+	if !strings.Contains(capturedJQL, `project = "ABC"`) || !strings.Contains(capturedJQL, `text ~ "cache" AND text ~ "invalidation"`) {
+		t.Fatalf("unexpected captured jql: %s", capturedJQL)
+	}
+	if result.Project != "ABC" || result.Query != "cache invalidation" || len(result.Issues) != 1 {
+		t.Fatalf("unexpected search result: %#v", result)
+	}
+}
+
 func TestLinkJiraIssueRequiresReplaceAndUnlinkHonorsForce(t *testing.T) {
 	repo := t.TempDir()
 	if _, err := InitRepo(InitOptions{RepoPath: repo}); err != nil {

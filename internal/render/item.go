@@ -462,6 +462,34 @@ func JiraTransitionsPrompt(result store.JiraTransitionsResult) string {
 	return strings.Join(lines, "\n")
 }
 
+func JiraSearchBrief(result store.JiraSearchResult) string {
+	lines := []string{
+		fmt.Sprintf("Project: %s", fallbackValue(result.Project)),
+		fmt.Sprintf("Query: %s", fallbackValue(result.Query)),
+		fmt.Sprintf("Matches: %d", len(result.Issues)),
+	}
+	if len(result.Issues) == 0 {
+		return strings.Join(lines, "\n")
+	}
+	lines = append(lines, "Issues:")
+	for _, issue := range result.Issues {
+		lines = append(lines, fmt.Sprintf("  %-10s %-12s %-10s %-8s %s", issue.Key, fallbackValue(issue.Status), fallbackValue(issue.IssueType), fallbackValue(issue.Priority), fallbackValue(issue.Summary)))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func JiraSearchPrompt(result store.JiraSearchResult) string {
+	lines := []string{
+		"Project: " + fallbackValue(result.Project),
+		"Query: " + fallbackValue(result.Query),
+		fmt.Sprintf("Matches: %d", len(result.Issues)),
+	}
+	for _, issue := range result.Issues {
+		lines = append(lines, fmt.Sprintf("%s status=%s type=%s priority=%s updated=%s summary=%s", issue.Key, fallbackValue(issue.Status), fallbackValue(issue.IssueType), fallbackValue(issue.Priority), fallbackValue(issue.Updated), fallbackValue(issue.Summary)))
+	}
+	return strings.Join(lines, "\n")
+}
+
 func fallbackValue(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {

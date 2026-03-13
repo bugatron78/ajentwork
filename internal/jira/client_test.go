@@ -22,6 +22,33 @@ func TestClientGetAndCreateIssue(t *testing.T) {
 			}
 
 			switch {
+			case r.Method == http.MethodPost && r.URL.Path == "/rest/api/3/search/jql":
+				var payload map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+					t.Fatalf("decode search payload: %v", err)
+				}
+				if payload["jql"] != `project = "ABC" AND text ~ "cache" ORDER BY updated DESC` {
+					t.Fatalf("unexpected search jql payload: %#v", payload["jql"])
+				}
+				if payload["maxResults"] != float64(5) {
+					t.Fatalf("unexpected search maxResults payload: %#v", payload["maxResults"])
+				}
+				response, _ := json.Marshal(map[string]any{
+					"issues": []any{
+						map[string]any{
+							"key":  "ABC-789",
+							"self": "https://example.atlassian.net/rest/api/3/issue/10002",
+							"fields": map[string]any{
+								"summary":   "Cache issue",
+								"issuetype": map[string]any{"name": "Bug"},
+								"priority":  map[string]any{"name": "High"},
+								"status":    map[string]any{"name": "To Do"},
+								"updated":   "2026-03-13T13:00:00.000+0000",
+							},
+						},
+					},
+				})
+				return jsonResponse(http.StatusOK, string(response)), nil
 			case r.Method == http.MethodGet && r.URL.Path == "/rest/api/3/issue/ABC-456/transitions":
 				response, _ := json.Marshal(map[string]any{
 					"transitions": []any{
@@ -102,6 +129,14 @@ func TestClientGetAndCreateIssue(t *testing.T) {
 	}
 	if issue.Key != "ABC-123" || issue.Description != "Fix the import path." {
 		t.Fatalf("unexpected issue: %#v", issue)
+	}
+
+	issues, err := client.SearchIssues(context.Background(), `project = "ABC" AND text ~ "cache" ORDER BY updated DESC`, 5)
+	if err != nil {
+		t.Fatalf("search issues: %v", err)
+	}
+	if len(issues) != 1 || issues[0].Key != "ABC-789" {
+		t.Fatalf("unexpected search issues: %#v", issues)
 	}
 
 	created, err := client.CreateIssue(context.Background(), CreateIssueInput{

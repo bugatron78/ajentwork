@@ -126,6 +126,22 @@ type LinkJiraIssueResult struct {
 	AlreadyLinked bool        `json:"already_linked"`
 }
 
+type SearchJiraIssuesOptions struct {
+	RepoPath   string
+	Query      string
+	JQL        string
+	ProjectKey string
+	Limit      int
+}
+
+type JiraSearchResult struct {
+	Query   string       `json:"query,omitempty"`
+	JQL     string       `json:"jql"`
+	Project string       `json:"project,omitempty"`
+	Limit   int          `json:"limit"`
+	Issues  []jira.Issue `json:"issues"`
+}
+
 type SyncJiraIssueOptions struct {
 	RepoPath string
 	ItemID   string
@@ -1094,6 +1110,77 @@ func ShowJiraTransitions(repoPath, itemID string) (JiraTransitionsResult, error)
 		CanTransition: canTransition,
 		Available:     available,
 	}, nil
+}
+
+func SearchJiraIssues(opts SearchJiraIssuesOptions) (JiraSearchResult, error) {
+	settings, err := config.ResolveJiraSettings(opts.RepoPath)
+	if err != nil {
+		return JiraSearchResult{}, err
+	}
+
+	projectKey := strings.TrimSpace(opts.ProjectKey)
+	if projectKey == "" {
+		projectKey = settings.Project
+	}
+
+	jql, normalizedQuery, err := buildJiraSearchJQL(strings.TrimSpace(opts.Query), strings.TrimSpace(opts.JQL), projectKey)
+	if err != nil {
+		return JiraSearchResult{}, err
+	}
+
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = 10
+	}
+
+	client := jira.Client{
+		BaseURL:    settings.BaseURL,
+		Email:      settings.Email,
+		APIToken:   settings.APIToken,
+		HTTPClient: jira.DefaultHTTPClient,
+	}
+	issues, err := client.SearchIssues(context.Background(), jql, limit)
+	if err != nil {
+		return JiraSearchResult{}, err
+	}
+
+	return JiraSearchResult{
+		Query:   normalizedQuery,
+		JQL:     jql,
+		Project: projectKey,
+		Limit:   limit,
+		Issues:  issues,
+	}, nil
+}
+
+func buildJiraSearchJQL(query, rawJQL, projectKey string) (string, string, error) {
+	if rawJQL != "" {
+		return rawJQL, "", nil
+	}
+
+	terms := strings.Fields(query)
+	if len(terms) == 0 {
+		return "", "", errors.New("search query is required; pass search terms or --jql")
+	}
+
+	clauses := make([]string, 0, len(terms)+1)
+	if projectKey = strings.TrimSpace(projectKey); projectKey != "" {
+		clauses = append(clauses, fmt.Sprintf(`project = "%s"`, escapeJQLString(projectKey)))
+	}
+
+	textTerms := make([]string, 0, len(terms))
+	for _, term := range terms {
+		textTerms = append(textTerms, fmt.Sprintf(`text ~ "%s"`, escapeJQLString(term)))
+	}
+	clauses = append(clauses, strings.Join(textTerms, " AND "))
+
+	return strings.Join(clauses, " AND ") + " ORDER BY updated DESC", strings.Join(terms, " "), nil
+}
+
+func escapeJQLString(value string) string {
+	value = strings.ReplaceAll(value, `\`, `\\`)
+	value = strings.ReplaceAll(value, `"`, `\"`)
+	return value
 }
 
 func ListItems(repoPath string) ([]domain.Item, error) {

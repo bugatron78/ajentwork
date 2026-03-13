@@ -313,6 +313,26 @@ func (s LinkJiraIssueService) Run(input LinkJiraIssueInput) (store.LinkJiraIssue
 	})
 }
 
+type SearchJiraIssuesInput struct {
+	RepoPath   string
+	Query      string
+	JQL        string
+	ProjectKey string
+	Limit      int
+}
+
+type SearchJiraIssuesService struct{}
+
+func (s SearchJiraIssuesService) Run(input SearchJiraIssuesInput) (store.JiraSearchResult, error) {
+	return store.SearchJiraIssues(store.SearchJiraIssuesOptions{
+		RepoPath:   input.RepoPath,
+		Query:      input.Query,
+		JQL:        input.JQL,
+		ProjectKey: input.ProjectKey,
+		Limit:      input.Limit,
+	})
+}
+
 type UnlinkJiraIssueInput struct {
 	RepoPath string
 	ItemID   string

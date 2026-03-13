@@ -740,6 +740,68 @@ func TestRunnerJiraStatusMapAndTransitions(t *testing.T) {
 	}
 }
 
+func TestRunnerJiraSearch(t *testing.T) {
+	repo := t.TempDir()
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	runner := NewRunner(stdout, stderr)
+
+	if code := runner.Run([]string{"--repo", repo, "init"}); code != 0 {
+		t.Fatalf("init exit code = %d, stderr = %s", code, stderr.String())
+	}
+
+	oldClient := jira.DefaultHTTPClient
+	defer func() { jira.DefaultHTTPClient = oldClient }()
+
+	var capturedJQL string
+	jira.DefaultHTTPClient = &http.Client{Transport: runnerRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+		wantAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte("agent@example.com:secret"))
+		if r.Header.Get("Authorization") != wantAuth {
+			return runnerJSONResponse(http.StatusUnauthorized, "unauthorized"), nil
+		}
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/rest/api/3/search/jql":
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode search payload: %v", err)
+			}
+			capturedJQL, _ = payload["jql"].(string)
+			response, _ := json.Marshal(map[string]any{
+				"issues": []any{
+					map[string]any{
+						"key":  "ABC-321",
+						"self": "https://example.atlassian.net/rest/api/3/issue/10002",
+						"fields": map[string]any{
+							"summary":   "Cache invalidation bug",
+							"issuetype": map[string]any{"name": "Bug"},
+							"priority":  map[string]any{"name": "High"},
+							"status":    map[string]any{"name": "To Do"},
+							"updated":   "2026-03-13T12:00:00.000+0000",
+						},
+					},
+				},
+			})
+			return runnerJSONResponse(http.StatusOK, string(response)), nil
+		default:
+			return runnerJSONResponse(http.StatusNotFound, "not found"), nil
+		}
+	})}
+
+	writeRunnerJiraTestConfig(t, repo, "https://example.atlassian.net", "ABC")
+	t.Setenv("AJ_JIRA_EMAIL", "agent@example.com")
+	t.Setenv("AJ_JIRA_API_TOKEN", "secret")
+
+	if code := runner.Run([]string{"--repo", repo, "jira", "search", "cache", "invalidation", "--limit", "5"}); code != 0 {
+		t.Fatalf("jira search exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(capturedJQL, `project = "ABC"`) || !strings.Contains(capturedJQL, `text ~ "cache" AND text ~ "invalidation"`) {
+		t.Fatalf("unexpected jira search jql: %s", capturedJQL)
+	}
+	if !strings.Contains(stdout.String(), "Matches: 1") || !strings.Contains(stdout.String(), "ABC-321") {
+		t.Fatalf("unexpected jira search output: %s", stdout.String())
+	}
+}
+
 func TestRunnerJiraUnlinkAndReplace(t *testing.T) {
 	repo := t.TempDir()
 	stdout := &bytes.Buffer{}

@@ -234,9 +234,12 @@ Render top\-level help, per\-command help, or topic help for workflows, examples
 .B aj workflows [topic] [\-\-format brief|json|prompt]
 Describe common aj sequences such as initializing a repo, claiming Jira work, or handling blockers.
 .SS JIRA
-.B aj jira <pull|push|link|unlink|status\-map|transitions|sync|comment> ...
-Use the Jira adapter to pull Jira issues into local aj items, push local items to Jira, link or unlink local items, inspect status mappings and transitions, sync linked items with conflict detection, and send compact milestone comments back to Jira.
+.B aj jira <search|pull|push|link|unlink|status\-map|transitions|sync|comment> ...
+Use the Jira adapter to search for likely existing issues, pull Jira issues into local aj items, push local items to Jira, link or unlink local items, inspect status mappings and transitions, sync linked items with conflict detection, and send compact milestone comments back to Jira.
 .RS
+.TP
+.B search <terms...> [\-\-limit <n>] [\-\-project <key>]
+search Jira for existing issues, defaulting to the configured project when one is set
 .TP
 .B pull <key>
 import a Jira issue into aj unless it is already linked
@@ -320,19 +323,21 @@ inspect recent activity without scanning every item
 .IP \[bu] 2
 3. Use `aj show <id>` after reading changes if you need the current snapshot too.
 .SS JIRA
-import and claim human\-created Jira work
+search, import, and claim human\-created Jira work
 .IP \[bu] 2
 1. Set `AJ_JIRA_EMAIL` and `AJ_JIRA_API_TOKEN`, and enable Jira in `.aj/config.toml`.
 .IP \[bu] 2
-2. Run `aj take jira ABC\-123 \-\-agent coder\-1` to import and claim human\-created work.
+2. Run `aj jira search ...` to look for likely existing Jira work before creating or linking anything new.
 .IP \[bu] 2
-3. Use `aj show <id>` to inspect the normalized local item.
+3. Run `aj take jira ABC\-123 \-\-agent coder\-1` to import and claim human\-created work.
 .IP \[bu] 2
-4. Use `aj jira status\-map` and `aj jira transitions <id>` to inspect the workflow before syncing.
+4. Use `aj show <id>` to inspect the normalized local item.
 .IP \[bu] 2
-5. Use `aj update <id> \-\-summary ... \-\-next ...` to record progress, `aj jira comment <id> \-\-summary "ready for review"` for milestone updates, or `aj jira sync <id> \-\-dry\-run` to preview sync direction and status transitions.
+5. Use `aj jira status\-map` and `aj jira transitions <id>` to inspect the workflow before syncing.
 .IP \[bu] 2
-6. Use `aj jira unlink <id>` before relinking to a different Jira issue, or `aj jira link <id> <key> \-\-replace` when that swap is intentional.
+6. Use `aj update <id> \-\-summary ... \-\-next ...` to record progress, `aj jira comment <id> \-\-summary "ready for review"` for milestone updates, or `aj jira sync <id> \-\-dry\-run` to preview sync direction and status transitions.
+.IP \[bu] 2
+7. Use `aj jira unlink <id>` before relinking to a different Jira issue, or `aj jira link <id> <key> \-\-replace` when that swap is intentional.
 .SS PROGRESS
 record progress while keeping next steps explicit
 .IP \[bu] 2
@@ -386,6 +391,8 @@ Initialize current repository: aj init
 .IP \[bu] 2
 Initialize a repo from another working directory: aj \-\-repo /workspace/project init
 .SS JIRA
+.IP \[bu] 2
+Search Jira for existing work: aj jira search cache invalidation
 .IP \[bu] 2
 Import and claim Jira work: aj take jira ABC\-123 \-\-agent coder\-1
 .IP \[bu] 2

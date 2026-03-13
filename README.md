@@ -73,6 +73,7 @@ It also installs the `aj(1)` man page, so `man aj` works after a Homebrew instal
 
 The first Jira adapter slice supports:
 
+- `aj jira search <terms...> [--limit <n>] [--project <key>]`
 - `aj jira pull <key>`
 - `aj jira push <id> [--project <key>] [--type <name>]`
 - `aj jira link <id> <key> [--replace]`
@@ -83,6 +84,7 @@ The first Jira adapter slice supports:
 - `aj jira comment <id> --summary "..."`
 - `aj take jira <key> --agent <name>`
 
+Use `aj jira search ...` before creating or linking new work so agents can check whether a matching Jira issue already exists.
 `aj jira sync` will also try to move the remote Jira issue to the mapped Jira status when the local `aj` item status has changed and Jira exposes a matching transition.
 Use `aj jira status-map` and `aj jira transitions <id>` to inspect the configured mapping and the live remote workflow before syncing.
 Use `aj jira unlink <id>` before moving an item to a different Jira issue, or `aj jira link <id> <key> --replace` when that relink is intentional.

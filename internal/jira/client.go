@@ -50,6 +50,63 @@ type Transition struct {
 	To   string
 }
 
+func (c Client) SearchIssues(ctx context.Context, jql string, limit int) ([]Issue, error) {
+	if strings.TrimSpace(jql) == "" {
+		return nil, fmt.Errorf("jira search JQL is required")
+	}
+	if limit <= 0 {
+		limit = 10
+	}
+
+	body := map[string]any{
+		"jql":        strings.TrimSpace(jql),
+		"maxResults": limit,
+		"fields":     []string{"summary", "description", "issuetype", "priority", "status", "updated"},
+	}
+	var payload struct {
+		Issues []struct {
+			Key    string `json:"key"`
+			Self   string `json:"self"`
+			Fields struct {
+				Summary     string          `json:"summary"`
+				Description json.RawMessage `json:"description"`
+				IssueType   struct {
+					Name string `json:"name"`
+				} `json:"issuetype"`
+				Priority *struct {
+					Name string `json:"name"`
+				} `json:"priority"`
+				Status struct {
+					Name string `json:"name"`
+				} `json:"status"`
+				Updated string `json:"updated"`
+			} `json:"fields"`
+		} `json:"issues"`
+	}
+	if err := c.doJSON(ctx, http.MethodPost, "/rest/api/3/search/jql", body, &payload); err != nil {
+		return nil, err
+	}
+
+	issues := make([]Issue, 0, len(payload.Issues))
+	for _, issue := range payload.Issues {
+		priority := ""
+		if issue.Fields.Priority != nil {
+			priority = issue.Fields.Priority.Name
+		}
+		issues = append(issues, Issue{
+			Key:         issue.Key,
+			URL:         strings.TrimRight(c.BaseURL, "/") + "/browse/" + issue.Key,
+			Summary:     strings.TrimSpace(issue.Fields.Summary),
+			Description: strings.TrimSpace(extractADFText(issue.Fields.Description)),
+			IssueType:   strings.TrimSpace(issue.Fields.IssueType.Name),
+			Priority:    strings.TrimSpace(priority),
+			Status:      strings.TrimSpace(issue.Fields.Status.Name),
+			Updated:     strings.TrimSpace(issue.Fields.Updated),
+		})
+	}
+	return issues, nil
+}
+
 func (c Client) GetIssue(ctx context.Context, issueKey string) (Issue, error) {
 	path := fmt.Sprintf("/rest/api/3/issue/%s?fields=summary,description,issuetype,priority,status,updated", url.PathEscape(strings.TrimSpace(issueKey)))
 	var payload struct {

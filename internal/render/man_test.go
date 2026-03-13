@@ -17,7 +17,7 @@ func TestManPageIncludesCoreSections(t *testing.T) {
 		"aj \\- agent work tracker with optional Jira sync",
 		".SH COMMANDS",
 		".SS JIRA",
-		"aj jira <pull|push|link|unlink|status\\-map|transitions|sync|comment> ...",
+		"aj jira <search|pull|push|link|unlink|status\\-map|transitions|sync|comment> ...",
 		".SH WORKFLOWS",
 		".SH EXAMPLES",
 		".SH CONFIGURATION",

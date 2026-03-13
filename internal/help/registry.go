@@ -322,9 +322,10 @@ func DefaultRegistry() Registry {
 		{
 			Name:    "jira",
 			Summary: "import or export Jira issues",
-			Purpose: "Use the Jira adapter to pull Jira issues into local aj items, push local items to Jira, link or unlink local items, inspect status mappings and transitions, sync linked items with conflict detection, and send compact milestone comments back to Jira.",
-			Usage:   "aj jira <pull|push|link|unlink|status-map|transitions|sync|comment> ...",
+			Purpose: "Use the Jira adapter to search for likely existing issues, pull Jira issues into local aj items, push local items to Jira, link or unlink local items, inspect status mappings and transitions, sync linked items with conflict detection, and send compact milestone comments back to Jira.",
+			Usage:   "aj jira <search|pull|push|link|unlink|status-map|transitions|sync|comment> ...",
 			Options: []OptionDoc{
+				{Name: "search <terms...> [--limit <n>] [--project <key>]", Description: "search Jira for existing issues, defaulting to the configured project when one is set"},
 				{Name: "pull <key>", Description: "import a Jira issue into aj unless it is already linked"},
 				{Name: "push <id>", Description: "create a Jira issue from a local aj item unless it is already linked"},
 				{Name: "link <id> <key> [--replace]", Description: "attach an existing local item to an existing Jira issue; require --replace to swap an existing link"},
@@ -337,6 +338,7 @@ func DefaultRegistry() Registry {
 				{Name: "env: AJ_JIRA_API_TOKEN", Description: "API token used for Jira Cloud basic auth"},
 			},
 			Examples: []ExampleDoc{
+				{Label: "Search for likely existing work", Command: "aj jira search cache invalidation"},
 				{Label: "Import a Jira issue", Command: "aj jira pull ABC-123"},
 				{Label: "Push a local item to Jira", Command: "aj jira push W-8F3K2P1Q --project ABC --type Task"},
 				{Label: "Link local work to Jira", Command: "aj jira link W-8F3K2P1Q ABC-123"},
@@ -348,9 +350,9 @@ func DefaultRegistry() Registry {
 				{Label: "Import and claim Jira work", Command: "aj take jira ABC-123 --agent coder-1"},
 			},
 			Related:        []string{"take", "show", "workflows"},
-			Safety:         []string{"Set Jira credentials through environment variables instead of committing secrets into .aj/config.toml.", "Use `aj jira status-map` and `aj jira transitions <id>` before the first sync or whenever local and remote workflow behavior is unclear.", "Use `aj jira unlink --force` only when you intentionally want to drop a dirty or conflicted Jira link.", "Sync may attempt a Jira status transition when local status differs and a mapped transition exists."},
+			Safety:         []string{"Set Jira credentials through environment variables instead of committing secrets into .aj/config.toml.", "Use `aj jira search ...` before creating or linking new work so agents can avoid duplicate issues.", "Use `aj jira status-map` and `aj jira transitions <id>` before the first sync or whenever local and remote workflow behavior is unclear.", "Use `aj jira unlink --force` only when you intentionally want to drop a dirty or conflicted Jira link.", "Sync may attempt a Jira status transition when local status differs and a mapped transition exists."},
 			WorkflowTags:   []string{"jira", "integration"},
-			SearchKeywords: []string{"jira", "import", "export", "sync", "comment", "transition", "status map", "workflow", "unlink", "relink"},
+			SearchKeywords: []string{"jira", "search", "find", "import", "export", "sync", "comment", "transition", "status map", "workflow", "unlink", "relink"},
 		},
 		{
 			Name:    "init",
@@ -462,14 +464,15 @@ func DefaultRegistry() Registry {
 		},
 		"jira": {
 			Name:  "jira",
-			Topic: "import and claim human-created Jira work",
+			Topic: "search, import, and claim human-created Jira work",
 			Steps: []string{
 				"1. Set `AJ_JIRA_EMAIL` and `AJ_JIRA_API_TOKEN`, and enable Jira in `.aj/config.toml`.",
-				"2. Run `aj take jira ABC-123 --agent coder-1` to import and claim human-created work.",
-				"3. Use `aj show <id>` to inspect the normalized local item.",
-				"4. Use `aj jira status-map` and `aj jira transitions <id>` to inspect the workflow before syncing.",
-				"5. Use `aj update <id> --summary ... --next ...` to record progress, `aj jira comment <id> --summary \"ready for review\"` for milestone updates, or `aj jira sync <id> --dry-run` to preview sync direction and status transitions.",
-				"6. Use `aj jira unlink <id>` before relinking to a different Jira issue, or `aj jira link <id> <key> --replace` when that swap is intentional.",
+				"2. Run `aj jira search ...` to look for likely existing Jira work before creating or linking anything new.",
+				"3. Run `aj take jira ABC-123 --agent coder-1` to import and claim human-created work.",
+				"4. Use `aj show <id>` to inspect the normalized local item.",
+				"5. Use `aj jira status-map` and `aj jira transitions <id>` to inspect the workflow before syncing.",
+				"6. Use `aj update <id> --summary ... --next ...` to record progress, `aj jira comment <id> --summary \"ready for review\"` for milestone updates, or `aj jira sync <id> --dry-run` to preview sync direction and status transitions.",
+				"7. Use `aj jira unlink <id>` before relinking to a different Jira issue, or `aj jira link <id> <key> --replace` when that swap is intentional.",
 			},
 		},
 		"blocked": {
@@ -615,6 +618,7 @@ func DefaultRegistry() Registry {
 		"jira": {
 			Topic: "jira",
 			Examples: []ExampleDoc{
+				{Label: "Search Jira for existing work", Command: "aj jira search cache invalidation"},
 				{Label: "Import and claim Jira work", Command: "aj take jira ABC-123 --agent coder-1"},
 				{Label: "Import a Jira issue", Command: "aj jira pull ABC-123"},
 				{Label: "Push a local item to Jira", Command: "aj jira push W-8F3K2P1Q --project ABC --type Task"},

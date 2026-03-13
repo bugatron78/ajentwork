@@ -1439,6 +1439,8 @@ func (r Runner) runJira(globals globalOptions, args []string) (int, error) {
 		return r.runJiraPush(globals, args[1:])
 	case "link":
 		return r.runJiraLink(globals, args[1:])
+	case "search":
+		return r.runJiraSearch(globals, args[1:])
 	case "unlink":
 		return r.runJiraUnlink(globals, args[1:])
 	case "sync":
@@ -1607,6 +1609,84 @@ func (r Runner) runJiraLink(globals globalOptions, args []string) (int, error) {
 			status = "already linked to Jira"
 		}
 		_, err = fmt.Fprintf(r.stdout, "Status: %s\nID: %s\nJira: %s\n", status, result.Item.ID, result.Item.Jira.Key)
+		return 0, err
+	case domain.FormatJSON:
+		return r.renderJSON(result)
+	default:
+		return 2, fmt.Errorf("unsupported format %q", globals.format)
+	}
+}
+
+func (r Runner) runJiraSearch(globals globalOptions, args []string) (int, error) {
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			return r.renderCommandHelp("jira", globals.format)
+		}
+	}
+	if len(args) == 0 {
+		return 2, errors.New("usage: aj jira search <terms...> [--limit <n>] [--project <key>] | aj jira search --jql <query> [--limit <n>]")
+	}
+
+	queryParts := make([]string, 0, len(args))
+	rawJQL := ""
+	projectKey := ""
+	limit := 10
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--limit":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --limit")
+			}
+			value, err := strconv.Atoi(args[i])
+			if err != nil || value <= 0 {
+				return 2, fmt.Errorf("invalid limit %q", args[i])
+			}
+			limit = value
+		case "--project":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --project")
+			}
+			projectKey = args[i]
+		case "--jql":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --jql")
+			}
+			rawJQL = args[i]
+		default:
+			queryParts = append(queryParts, args[i])
+		}
+	}
+	if strings.TrimSpace(rawJQL) != "" && len(queryParts) > 0 {
+		return 2, errors.New("usage: aj jira search <terms...> [--limit <n>] [--project <key>] | aj jira search --jql <query> [--limit <n>]")
+	}
+	if strings.TrimSpace(rawJQL) != "" && strings.TrimSpace(projectKey) != "" {
+		return 2, errors.New("cannot combine --project with --jql; include the project filter directly in the JQL")
+	}
+	if strings.TrimSpace(rawJQL) == "" && len(queryParts) == 0 {
+		return 2, errors.New("usage: aj jira search <terms...> [--limit <n>] [--project <key>] | aj jira search --jql <query> [--limit <n>]")
+	}
+
+	service := app.SearchJiraIssuesService{}
+	result, err := service.Run(app.SearchJiraIssuesInput{
+		RepoPath:   globals.repoPath,
+		Query:      strings.Join(queryParts, " "),
+		JQL:        rawJQL,
+		ProjectKey: projectKey,
+		Limit:      limit,
+	})
+	if err != nil {
+		return 1, err
+	}
+
+	switch globals.format {
+	case domain.FormatBrief:
+		_, err = fmt.Fprintln(r.stdout, render.JiraSearchBrief(result))
+		return 0, err
+	case domain.FormatPrompt:
+		_, err = fmt.Fprintln(r.stdout, render.JiraSearchPrompt(result))
 		return 0, err
 	case domain.FormatJSON:
 		return r.renderJSON(result)
