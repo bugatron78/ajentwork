@@ -2227,16 +2227,49 @@ func parseStringList(raw string) ([]string, error) {
 	if inner == "" {
 		return nil, nil
 	}
-	parts := strings.Split(inner, ",")
-	result := make([]string, 0, len(parts))
-	for _, part := range parts {
-		value, err := strconv.Unquote(strings.TrimSpace(part))
+	result := make([]string, 0, strings.Count(inner, `"`)/2)
+	for inner != "" {
+		inner = strings.TrimSpace(inner)
+		if inner == "" {
+			break
+		}
+		if !strings.HasPrefix(inner, `"`) {
+			return nil, fmt.Errorf("expected quoted string, got %q", inner)
+		}
+		token, rest, err := consumeQuotedToken(inner)
+		if err != nil {
+			return nil, err
+		}
+		value, err := strconv.Unquote(token)
 		if err != nil {
 			return nil, err
 		}
 		result = append(result, value)
+		inner = strings.TrimSpace(rest)
+		if inner == "" {
+			break
+		}
+		if !strings.HasPrefix(inner, ",") {
+			return nil, fmt.Errorf("expected comma separator, got %q", inner)
+		}
+		inner = inner[1:]
 	}
 	return result, nil
+}
+
+func consumeQuotedToken(raw string) (string, string, error) {
+	escaped := false
+	for i := 1; i < len(raw); i++ {
+		switch {
+		case escaped:
+			escaped = false
+		case raw[i] == '\\':
+			escaped = true
+		case raw[i] == '"':
+			return raw[:i+1], raw[i+1:], nil
+		}
+	}
+	return "", "", errors.New("unterminated quoted string")
 }
 
 func normalizeStringList(values []string) []string {

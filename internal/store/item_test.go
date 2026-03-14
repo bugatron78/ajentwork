@@ -71,7 +71,7 @@ func TestCreateItemPersistsStructuredContext(t *testing.T) {
 		NextAction:    "Wire context fields through create and show",
 		Acceptance:    []string{"agents can record success criteria", "show surfaces those criteria compactly"},
 		Constraints:   []string{"keep storage git-friendly"},
-		Risks:         []string{"too much verbosity can waste tokens"},
+		Risks:         []string{"too much verbosity can waste tokens, especially in prompt mode"},
 		RelevantFiles: []string{"internal/store/item.go", "internal/render/item.go"},
 		Verification:  []string{"run go test ./...", "inspect aj show output"},
 		Priority:      1,
@@ -91,7 +91,7 @@ func TestCreateItemPersistsStructuredContext(t *testing.T) {
 	if got, want := strings.Join(loaded.Constraints, "|"), "keep storage git-friendly"; got != want {
 		t.Fatalf("constraints = %q, want %q", got, want)
 	}
-	if got, want := strings.Join(loaded.Risks, "|"), "too much verbosity can waste tokens"; got != want {
+	if got, want := strings.Join(loaded.Risks, "|"), "too much verbosity can waste tokens, especially in prompt mode"; got != want {
 		t.Fatalf("risks = %q, want %q", got, want)
 	}
 	if got, want := strings.Join(loaded.RelevantFiles, "|"), "internal/store/item.go|internal/render/item.go"; got != want {
