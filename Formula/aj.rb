@@ -1,8 +1,8 @@
 class Aj < Formula
   desc "Local-first work tracker for AI agents"
   homepage "https://github.com/bugatron78/ajentwork"
-  url "https://github.com/bugatron78/ajentwork/archive/refs/tags/v0.1.4.tar.gz"
-  sha256 "6fad9c74696731d82b6e58a89503005885edc0d4c59ec282fa3a40276f6198fb"
+  url "https://github.com/bugatron78/ajentwork/archive/refs/tags/v0.1.5.tar.gz"
+  sha256 "28abde1f68e52de01afb4d562f0fb16618919d71f83bf6fe1ab31318770a4b06"
   license "Apache-2.0"
 
   depends_on "go" => :build
