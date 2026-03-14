@@ -5,6 +5,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_DIR="$ROOT_DIR/dist"
 BUILD_DIR="$DIST_DIR/build"
 VERSION="${1:-}"
+COMMIT="$(git -C "$ROOT_DIR" rev-parse --short HEAD 2>/dev/null || true)"
+BUILD_DATE="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 
 if [[ -z "$VERSION" ]]; then
   if VERSION="$(git -C "$ROOT_DIR" describe --tags --always --dirty 2>/dev/null)"; then
@@ -19,6 +21,14 @@ TARGETS=(
   "darwin arm64"
   "linux amd64"
   "linux arm64"
+)
+
+LDFLAGS=(
+  "-s"
+  "-w"
+  "-X" "ajentwork/internal/buildinfo.Version=${VERSION}"
+  "-X" "ajentwork/internal/buildinfo.Commit=${COMMIT}"
+  "-X" "ajentwork/internal/buildinfo.Date=${BUILD_DATE}"
 )
 
 MANPAGE_PATH="$ROOT_DIR/docs/aj.1"
@@ -48,7 +58,7 @@ for target in "${TARGETS[@]}"; do
   (
     cd "$ROOT_DIR"
     CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
-      go build -trimpath -o "$STAGE_DIR/$BINARY_NAME" ./cmd/aj
+      go build -trimpath -ldflags "${LDFLAGS[*]}" -o "$STAGE_DIR/$BINARY_NAME" ./cmd/aj
   )
 
   cat >"$STAGE_DIR/INSTALL.txt" <<EOF
@@ -56,7 +66,7 @@ aj ${VERSION}
 
 Install:
   1. Move the aj binary somewhere on your PATH.
-  2. Run 'aj --help' to verify the installation.
+  2. Run 'aj --version' to verify the installation.
 
 Source:
   https://github.com/bugatron78/ajentwork

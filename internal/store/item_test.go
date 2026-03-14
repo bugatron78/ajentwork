@@ -57,6 +57,184 @@ func TestCreateListAndGetItem(t *testing.T) {
 	}
 }
 
+func TestCreateItemPersistsStructuredContext(t *testing.T) {
+	repo := t.TempDir()
+	if _, err := InitRepo(InitOptions{RepoPath: repo}); err != nil {
+		t.Fatalf("init repo: %v", err)
+	}
+
+	created, err := CreateItem(CreateItemOptions{
+		RepoPath:      repo,
+		Kind:          domain.KindFeature,
+		Title:         "Structured authoring",
+		Goal:          "Give agents richer ticket context",
+		NextAction:    "Wire context fields through create and show",
+		Acceptance:    []string{"agents can record success criteria", "show surfaces those criteria compactly"},
+		Constraints:   []string{"keep storage git-friendly"},
+		Risks:         []string{"too much verbosity can waste tokens"},
+		RelevantFiles: []string{"internal/store/item.go", "internal/render/item.go"},
+		Verification:  []string{"run go test ./...", "inspect aj show output"},
+		Priority:      1,
+	})
+	if err != nil {
+		t.Fatalf("create item: %v", err)
+	}
+
+	loaded, err := GetItem(repo, created.ID)
+	if err != nil {
+		t.Fatalf("get item: %v", err)
+	}
+
+	if got, want := strings.Join(loaded.Acceptance, "|"), "agents can record success criteria|show surfaces those criteria compactly"; got != want {
+		t.Fatalf("acceptance = %q, want %q", got, want)
+	}
+	if got, want := strings.Join(loaded.Constraints, "|"), "keep storage git-friendly"; got != want {
+		t.Fatalf("constraints = %q, want %q", got, want)
+	}
+	if got, want := strings.Join(loaded.Risks, "|"), "too much verbosity can waste tokens"; got != want {
+		t.Fatalf("risks = %q, want %q", got, want)
+	}
+	if got, want := strings.Join(loaded.RelevantFiles, "|"), "internal/store/item.go|internal/render/item.go"; got != want {
+		t.Fatalf("relevant files = %q, want %q", got, want)
+	}
+	if got, want := strings.Join(loaded.Verification, "|"), "run go test ./...|inspect aj show output"; got != want {
+		t.Fatalf("verification = %q, want %q", got, want)
+	}
+}
+
+func TestAttachArtifactAndRecordReceipt(t *testing.T) {
+	repo := t.TempDir()
+	if _, err := InitRepo(InitOptions{RepoPath: repo}); err != nil {
+		t.Fatalf("init repo: %v", err)
+	}
+
+	item, err := CreateItem(CreateItemOptions{
+		RepoPath:   repo,
+		Kind:       domain.KindTask,
+		Title:      "Capture evidence",
+		Goal:       "Persist logs and receipts for another agent",
+		NextAction: "Attach a log and record a test receipt",
+		Priority:   1,
+	})
+	if err != nil {
+		t.Fatalf("create item: %v", err)
+	}
+
+	logPath := filepath.Join(repo, "build.log")
+	if err := os.WriteFile(logPath, []byte("build output"), 0o644); err != nil {
+		t.Fatalf("write log: %v", err)
+	}
+
+	artifact, err := AttachArtifact(AttachArtifactOptions{
+		RepoPath: repo,
+		ItemID:   item.ID,
+		Path:     logPath,
+		Summary:  "build log before the fix",
+		Label:    "pre-fix-log",
+	})
+	if err != nil {
+		t.Fatalf("attach artifact: %v", err)
+	}
+	if artifact.StoredPath == "" {
+		t.Fatalf("expected stored path to be set")
+	}
+	if _, err := os.Stat(artifact.StoredPath); err != nil {
+		t.Fatalf("stat copied artifact: %v", err)
+	}
+
+	receiptOutputPath := filepath.Join(repo, "test.log")
+	if err := os.WriteFile(receiptOutputPath, []byte("test output"), 0o644); err != nil {
+		t.Fatalf("write receipt output: %v", err)
+	}
+
+	receipt, err := RecordReceipt(RecordReceiptOptions{
+		RepoPath: repo,
+		ItemID:   item.ID,
+		Summary:  "go test failed before the patch",
+		Command:  "go test ./...",
+		ExitCode: 1,
+		Output:   receiptOutputPath,
+		Label:    "test-failure",
+	})
+	if err != nil {
+		t.Fatalf("record receipt: %v", err)
+	}
+	if receipt.ExitCode == nil || *receipt.ExitCode != 1 {
+		t.Fatalf("expected exit code 1, got %#v", receipt.ExitCode)
+	}
+
+	artifacts, err := ListArtifacts(repo, item.ID, 10)
+	if err != nil {
+		t.Fatalf("list artifacts: %v", err)
+	}
+	if len(artifacts) != 2 {
+		t.Fatalf("expected two artifacts, got %d", len(artifacts))
+	}
+
+	updated, err := GetItem(repo, item.ID)
+	if err != nil {
+		t.Fatalf("get updated item: %v", err)
+	}
+	if !updated.UpdatedAt.After(item.UpdatedAt) {
+		t.Fatalf("expected item updated_at to advance after artifact activity")
+	}
+}
+
+func TestCheckpointItem(t *testing.T) {
+	repo := t.TempDir()
+	if _, err := InitRepo(InitOptions{RepoPath: repo}); err != nil {
+		t.Fatalf("init repo: %v", err)
+	}
+
+	item, err := CreateItem(CreateItemOptions{
+		RepoPath:   repo,
+		Kind:       domain.KindTask,
+		Title:      "Checkpoint work",
+		Goal:       "Capture a resume point",
+		NextAction: "Implement checkpoint support",
+		Priority:   1,
+	})
+	if err != nil {
+		t.Fatalf("create item: %v", err)
+	}
+
+	next := "Dogfood the checkpoint flow"
+	checkpointed, err := CheckpointItem(CheckpointItemOptions{
+		RepoPath:   repo,
+		ItemID:     item.ID,
+		Summary:    "checkpoint support is implemented; only smoke-testing remains",
+		NextAction: &next,
+		Risks:      []string{"rendering could be too verbose"},
+		Verify:     []string{"run go test ./...", "inspect aj show output"},
+	})
+	if err != nil {
+		t.Fatalf("checkpoint item: %v", err)
+	}
+	if checkpointed.Checkpoint == nil {
+		t.Fatalf("expected checkpoint to be recorded")
+	}
+	if checkpointed.Checkpoint.Summary != "checkpoint support is implemented; only smoke-testing remains" {
+		t.Fatalf("unexpected checkpoint summary %q", checkpointed.Checkpoint.Summary)
+	}
+	if got, want := strings.Join(checkpointed.Checkpoint.Risks, "|"), "rendering could be too verbose"; got != want {
+		t.Fatalf("risks = %q, want %q", got, want)
+	}
+	if got, want := strings.Join(checkpointed.Checkpoint.Verify, "|"), "run go test ./...|inspect aj show output"; got != want {
+		t.Fatalf("verify = %q, want %q", got, want)
+	}
+	if checkpointed.NextAction != next {
+		t.Fatalf("next action = %q, want %q", checkpointed.NextAction, next)
+	}
+
+	loaded, err := GetItem(repo, item.ID)
+	if err != nil {
+		t.Fatalf("reload item: %v", err)
+	}
+	if loaded.Checkpoint == nil || loaded.Checkpoint.Summary != checkpointed.Checkpoint.Summary {
+		t.Fatalf("expected persisted checkpoint, got %#v", loaded.Checkpoint)
+	}
+}
+
 func TestUpdateAndCompleteItem(t *testing.T) {
 	repo := t.TempDir()
 	if _, err := InitRepo(InitOptions{RepoPath: repo}); err != nil {

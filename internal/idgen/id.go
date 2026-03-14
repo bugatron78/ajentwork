@@ -15,6 +15,10 @@ func NewEventID() (string, error) {
 	return newID("EV-", 12)
 }
 
+func NewArtifactID() (string, error) {
+	return newID("AR-", 10)
+}
+
 func newID(prefix string, length int) (string, error) {
 	bytes := make([]byte, length)
 	if _, err := rand.Read(bytes); err != nil {

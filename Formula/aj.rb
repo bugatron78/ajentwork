@@ -8,12 +8,13 @@ class Aj < Formula
   depends_on "go" => :build
 
   def install
-    system "go", "build", *std_go_args(ldflags: "-s -w"), "./cmd/aj"
+    version_flag = "-X ajentwork/internal/buildinfo.Version=v#{version}"
+    system "go", "build", *std_go_args(ldflags: "-s -w #{version_flag}"), "./cmd/aj"
     man1.install "docs/aj.1"
   end
 
   test do
-    output = shell_output("#{bin}/aj --help")
-    assert_match "agent work tracker", output
+    output = shell_output("#{bin}/aj --version")
+    assert_match version.to_s, output
   end
 end

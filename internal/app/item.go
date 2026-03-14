@@ -8,24 +8,34 @@ import (
 )
 
 type NewItemInput struct {
-	RepoPath   string
-	Kind       domain.ItemKind
-	Title      string
-	Goal       string
-	NextAction string
-	Priority   int
+	RepoPath      string
+	Kind          domain.ItemKind
+	Title         string
+	Goal          string
+	NextAction    string
+	Acceptance    []string
+	Constraints   []string
+	Risks         []string
+	RelevantFiles []string
+	Verification  []string
+	Priority      int
 }
 
 type NewItemService struct{}
 
 func (s NewItemService) Run(input NewItemInput) (domain.Item, error) {
 	return store.CreateItem(store.CreateItemOptions{
-		RepoPath:   input.RepoPath,
-		Kind:       input.Kind,
-		Title:      input.Title,
-		Goal:       input.Goal,
-		NextAction: input.NextAction,
-		Priority:   input.Priority,
+		RepoPath:      input.RepoPath,
+		Kind:          input.Kind,
+		Title:         input.Title,
+		Goal:          input.Goal,
+		NextAction:    input.NextAction,
+		Acceptance:    input.Acceptance,
+		Constraints:   input.Constraints,
+		Risks:         input.Risks,
+		RelevantFiles: input.RelevantFiles,
+		Verification:  input.Verification,
+		Priority:      input.Priority,
 	})
 }
 
@@ -193,6 +203,28 @@ func (s ReopenItemService) Run(input ReopenItemInput) (domain.Item, error) {
 	})
 }
 
+type CheckpointItemInput struct {
+	RepoPath   string
+	ItemID     string
+	Summary    string
+	NextAction *string
+	Risks      []string
+	Verify     []string
+}
+
+type CheckpointItemService struct{}
+
+func (s CheckpointItemService) Run(input CheckpointItemInput) (domain.Item, error) {
+	return store.CheckpointItem(store.CheckpointItemOptions{
+		RepoPath:   input.RepoPath,
+		ItemID:     input.ItemID,
+		Summary:    input.Summary,
+		NextAction: input.NextAction,
+		Risks:      input.Risks,
+		Verify:     input.Verify,
+	})
+}
+
 type NextItemInput struct {
 	RepoPath string
 	Agent    string
@@ -247,6 +279,62 @@ func (s ChangesService) Run(input ChangesInput) ([]domain.Event, error) {
 		Since:    input.Since,
 		Limit:    input.Limit,
 	})
+}
+
+type AttachArtifactInput struct {
+	RepoPath string
+	ItemID   string
+	Path     string
+	Summary  string
+	Label    string
+}
+
+type AttachArtifactService struct{}
+
+func (s AttachArtifactService) Run(input AttachArtifactInput) (domain.Artifact, error) {
+	return store.AttachArtifact(store.AttachArtifactOptions{
+		RepoPath: input.RepoPath,
+		ItemID:   input.ItemID,
+		Path:     input.Path,
+		Summary:  input.Summary,
+		Label:    input.Label,
+	})
+}
+
+type RecordReceiptInput struct {
+	RepoPath string
+	ItemID   string
+	Summary  string
+	Command  string
+	ExitCode int
+	Output   string
+	Label    string
+}
+
+type RecordReceiptService struct{}
+
+func (s RecordReceiptService) Run(input RecordReceiptInput) (domain.Artifact, error) {
+	return store.RecordReceipt(store.RecordReceiptOptions{
+		RepoPath: input.RepoPath,
+		ItemID:   input.ItemID,
+		Summary:  input.Summary,
+		Command:  input.Command,
+		ExitCode: input.ExitCode,
+		Output:   input.Output,
+		Label:    input.Label,
+	})
+}
+
+type ListArtifactsInput struct {
+	RepoPath string
+	ItemID   string
+	Limit    int
+}
+
+type ListArtifactsService struct{}
+
+func (s ListArtifactsService) Run(input ListArtifactsInput) ([]domain.Artifact, error) {
+	return store.ListArtifacts(input.RepoPath, input.ItemID, input.Limit)
 }
 
 type ReadyInput struct {

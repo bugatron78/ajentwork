@@ -161,4 +161,4 @@ if [[ "$INSTALL_MANPAGE" -eq 1 && -f "$TMP_DIR/aj_${VERSION}_${GOOS}_${GOARCH}/s
   echo "Installed man page to $MAN_DIR/aj.1"
 fi
 
-echo "Run '$INSTALL_DIR/aj --help' to verify the installation."
+echo "Run '$INSTALL_DIR/aj --version' to verify the installation."

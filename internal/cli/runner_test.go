@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"ajentwork/internal/buildinfo"
 	"ajentwork/internal/jira"
 )
 
@@ -90,6 +91,185 @@ func TestRunnerInitNewListShow(t *testing.T) {
 	}
 }
 
+func TestRunnerNewAndShowStructuredContext(t *testing.T) {
+	repo := t.TempDir()
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	runner := NewRunner(stdout, stderr)
+
+	if code := runner.Run([]string{"--repo", repo, "init"}); code != 0 {
+		t.Fatalf("init exit code = %d, stderr = %s", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{
+		"--repo", repo, "new",
+		"--kind", "feature",
+		"--title", "Structured authoring",
+		"--goal", "Give agents richer ticket context",
+		"--next", "Wire context fields through create and show",
+		"--accept", "agents can record success criteria",
+		"--accept", "show surfaces those criteria compactly",
+		"--constraint", "keep storage git-friendly",
+		"--risk", "too much verbosity can waste tokens",
+		"--file", "internal/store/item.go",
+		"--file", "internal/render/item.go",
+		"--verify", "run go test ./...",
+	}); code != 0 {
+		t.Fatalf("new exit code = %d, stderr = %s", code, stderr.String())
+	}
+
+	parts := strings.Fields(stdout.String())
+	if len(parts) < 2 {
+		t.Fatalf("unexpected new output: %s", stdout.String())
+	}
+	itemID := parts[1]
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "show", itemID}); code != 0 {
+		t.Fatalf("show exit code = %d, stderr = %s", code, stderr.String())
+	}
+
+	output := stdout.String()
+	if !strings.Contains(output, "Acceptance: agents can record success criteria; show surfaces those criteria compactly") {
+		t.Fatalf("expected acceptance in show output, got %s", output)
+	}
+	if !strings.Contains(output, "Constraints: keep storage git-friendly") {
+		t.Fatalf("expected constraints in show output, got %s", output)
+	}
+	if !strings.Contains(output, "Risks: too much verbosity can waste tokens") {
+		t.Fatalf("expected risks in show output, got %s", output)
+	}
+	if !strings.Contains(output, "Relevant Files: internal/store/item.go, internal/render/item.go") {
+		t.Fatalf("expected relevant files in show output, got %s", output)
+	}
+	if !strings.Contains(output, "Verification: run go test ./...") {
+		t.Fatalf("expected verification in show output, got %s", output)
+	}
+}
+
+func TestRunnerAttachReceiptAndArtifacts(t *testing.T) {
+	repo := t.TempDir()
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	runner := NewRunner(stdout, stderr)
+
+	if code := runner.Run([]string{"--repo", repo, "init"}); code != 0 {
+		t.Fatalf("init exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if code := runner.Run([]string{"--repo", repo, "new", "--kind", "task", "--title", "Capture evidence", "--goal", "Persist logs and receipts", "--next", "Attach evidence"}); code != 0 {
+		t.Fatalf("new exit code = %d, stderr = %s", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "ls", "--format", "json"}); code != 0 {
+		t.Fatalf("ls json exit code = %d, stderr = %s", code, stderr.String())
+	}
+	var items []map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &items); err != nil {
+		t.Fatalf("unmarshal list json: %v", err)
+	}
+	itemID := items[0]["id"].(string)
+
+	logPath := filepath.Join(repo, "build.log")
+	if err := os.WriteFile(logPath, []byte("build output"), 0o644); err != nil {
+		t.Fatalf("write log: %v", err)
+	}
+	receiptPath := filepath.Join(repo, "test.log")
+	if err := os.WriteFile(receiptPath, []byte("test output"), 0o644); err != nil {
+		t.Fatalf("write receipt output: %v", err)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "attach", itemID, "--path", logPath, "--summary", "build log before the fix", "--label", "pre-fix-log"}); code != 0 {
+		t.Fatalf("attach exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "attached AR-") {
+		t.Fatalf("unexpected attach output: %s", stdout.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "receipt", itemID, "--summary", "go test failed before the patch", "--command", "go test ./...", "--exit-code", "1", "--output", receiptPath, "--label", "test-failure"}); code != 0 {
+		t.Fatalf("receipt exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "attached AR-") {
+		t.Fatalf("unexpected receipt output: %s", stdout.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "artifacts", itemID}); code != 0 {
+		t.Fatalf("artifacts exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "build log before the fix") || !strings.Contains(stdout.String(), "go test failed before the patch") {
+		t.Fatalf("unexpected artifacts output: %s", stdout.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "show", itemID}); code != 0 {
+		t.Fatalf("show exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Artifacts:") || !strings.Contains(stdout.String(), "go test failed before the patch") {
+		t.Fatalf("expected show output to include artifacts, got %s", stdout.String())
+	}
+}
+
+func TestRunnerCheckpoint(t *testing.T) {
+	repo := t.TempDir()
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	runner := NewRunner(stdout, stderr)
+
+	if code := runner.Run([]string{"--repo", repo, "init"}); code != 0 {
+		t.Fatalf("init exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if code := runner.Run([]string{"--repo", repo, "new", "--kind", "task", "--title", "Checkpoint work", "--goal", "Capture a resume point", "--next", "Implement checkpoint support"}); code != 0 {
+		t.Fatalf("new exit code = %d, stderr = %s", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "ls", "--format", "json"}); code != 0 {
+		t.Fatalf("ls json exit code = %d, stderr = %s", code, stderr.String())
+	}
+	var items []map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &items); err != nil {
+		t.Fatalf("unmarshal list json: %v", err)
+	}
+	itemID := items[0]["id"].(string)
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "checkpoint", itemID, "--summary", "checkpoint support is implemented; only smoke-testing remains", "--next", "Dogfood the checkpoint flow", "--risk", "rendering could be too verbose", "--verify", "run go test ./..."}); code != 0 {
+		t.Fatalf("checkpoint exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "checkpointed "+itemID) {
+		t.Fatalf("unexpected checkpoint output: %s", stdout.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "show", itemID}); code != 0 {
+		t.Fatalf("show exit code = %d, stderr = %s", code, stderr.String())
+	}
+	output := stdout.String()
+	if !strings.Contains(output, "Checkpoint: checkpoint support is implemented; only smoke-testing remains") {
+		t.Fatalf("expected checkpoint summary in show output, got %s", output)
+	}
+	if !strings.Contains(output, "Checkpoint Risks: rendering could be too verbose") {
+		t.Fatalf("expected checkpoint risks in show output, got %s", output)
+	}
+	if !strings.Contains(output, "Checkpoint Verify: run go test ./...") {
+		t.Fatalf("expected checkpoint verify in show output, got %s", output)
+	}
+}
+
 func TestRunnerHelpSearch(t *testing.T) {
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
@@ -100,6 +280,45 @@ func TestRunnerHelpSearch(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "new") {
 		t.Fatalf("expected help search to find new command, got %s", stdout.String())
+	}
+}
+
+func TestRunnerVersion(t *testing.T) {
+	originalVersion := buildinfo.Version
+	originalCommit := buildinfo.Commit
+	originalDate := buildinfo.Date
+	buildinfo.Version = "v9.9.9"
+	buildinfo.Commit = "abc1234"
+	buildinfo.Date = "2026-03-14T01:23:45Z"
+	t.Cleanup(func() {
+		buildinfo.Version = originalVersion
+		buildinfo.Commit = originalCommit
+		buildinfo.Date = originalDate
+	})
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	runner := NewRunner(stdout, stderr)
+
+	if code := runner.Run([]string{"--version"}); code != 0 {
+		t.Fatalf("--version exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "v9.9.9") || !strings.Contains(stdout.String(), "abc1234") {
+		t.Fatalf("unexpected --version output: %s", stdout.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"version", "--format", "json"}); code != 0 {
+		t.Fatalf("version json exit code = %d, stderr = %s", code, stderr.String())
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal version json: %v", err)
+	}
+	if payload["version"] != "v9.9.9" {
+		t.Fatalf("unexpected version payload: %#v", payload)
 	}
 }
 

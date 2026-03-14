@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"ajentwork/internal/app"
+	"ajentwork/internal/buildinfo"
 	"ajentwork/internal/config"
 	"ajentwork/internal/domain"
 	"ajentwork/internal/help"
@@ -66,6 +67,9 @@ func (r Runner) run(args []string) (int, error) {
 	if remaining[0] == "--help" || remaining[0] == "-h" {
 		return r.renderRootHelp(globals.format)
 	}
+	if remaining[0] == "--version" || remaining[0] == "-v" {
+		return r.renderVersion(globals.format)
+	}
 
 	command := remaining[0]
 	commandArgs := remaining[1:]
@@ -93,6 +97,8 @@ func (r Runner) run(args []string) (int, error) {
 		return r.runRelease(globals, commandArgs)
 	case "handoff":
 		return r.runHandoff(globals, commandArgs)
+	case "checkpoint":
+		return r.runCheckpoint(globals, commandArgs)
 	case "reopen":
 		return r.runReopen(globals, commandArgs)
 	case "next":
@@ -103,10 +109,18 @@ func (r Runner) run(args []string) (int, error) {
 		return r.runLink(globals, commandArgs)
 	case "changes":
 		return r.runChanges(globals, commandArgs)
+	case "attach":
+		return r.runAttach(globals, commandArgs)
+	case "receipt":
+		return r.runReceipt(globals, commandArgs)
+	case "artifacts":
+		return r.runArtifacts(globals, commandArgs)
 	case "ready":
 		return r.runReady(globals, commandArgs)
 	case "jira":
 		return r.runJira(globals, commandArgs)
+	case "version":
+		return r.runVersion(globals, commandArgs)
 	case "help":
 		return r.runHelp(globals, commandArgs)
 	case "commands":
@@ -119,6 +133,34 @@ func (r Runner) run(args []string) (int, error) {
 		return r.runGlossary(globals, commandArgs)
 	default:
 		return 2, fmt.Errorf("unknown command %q\ntry: aj help", command)
+	}
+}
+
+func (r Runner) renderVersion(format domain.OutputFormat) (int, error) {
+	info := buildinfo.Current()
+
+	switch format {
+	case domain.FormatBrief:
+		if info.Commit != "" || info.Date != "" {
+			line := info.Version
+			if info.Commit != "" {
+				line += " (" + info.Commit + ")"
+			}
+			if info.Date != "" {
+				line += " built " + info.Date
+			}
+			_, err := fmt.Fprintln(r.stdout, line)
+			return 0, err
+		}
+		_, err := fmt.Fprintln(r.stdout, info.Version)
+		return 0, err
+	case domain.FormatPrompt:
+		_, err := fmt.Fprintf(r.stdout, "Version: %s\n", info.Version)
+		return 0, err
+	case domain.FormatJSON:
+		return r.renderJSON(info)
+	default:
+		return 2, fmt.Errorf("unsupported format %q", format)
 	}
 }
 
@@ -228,6 +270,18 @@ func (r Runner) runInit(globals globalOptions, args []string) (int, error) {
 	}
 }
 
+func (r Runner) runVersion(globals globalOptions, args []string) (int, error) {
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			return r.renderCommandHelp("version", globals.format)
+		}
+	}
+	if len(args) > 0 {
+		return 2, errors.New("usage: aj version")
+	}
+	return r.renderVersion(globals.format)
+}
+
 func (r Runner) runNew(globals globalOptions, args []string) (int, error) {
 	for _, arg := range args {
 		if arg == "--help" || arg == "-h" {
@@ -239,6 +293,11 @@ func (r Runner) runNew(globals globalOptions, args []string) (int, error) {
 	title := ""
 	goal := ""
 	nextAction := ""
+	var acceptance []string
+	var constraints []string
+	var risks []string
+	var relevantFiles []string
+	var verification []string
 	priority := 2
 
 	for i := 0; i < len(args); i++ {
@@ -267,6 +326,36 @@ func (r Runner) runNew(globals globalOptions, args []string) (int, error) {
 				return 2, errors.New("missing value for --next")
 			}
 			nextAction = args[i]
+		case "--accept":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --accept")
+			}
+			acceptance = append(acceptance, args[i])
+		case "--constraint":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --constraint")
+			}
+			constraints = append(constraints, args[i])
+		case "--risk":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --risk")
+			}
+			risks = append(risks, args[i])
+		case "--file":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --file")
+			}
+			relevantFiles = append(relevantFiles, args[i])
+		case "--verify":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --verify")
+			}
+			verification = append(verification, args[i])
 		case "--priority":
 			i++
 			if i >= len(args) {
@@ -289,12 +378,17 @@ func (r Runner) runNew(globals globalOptions, args []string) (int, error) {
 
 	service := app.NewItemService{}
 	item, err := service.Run(app.NewItemInput{
-		RepoPath:   globals.repoPath,
-		Kind:       kind,
-		Title:      title,
-		Goal:       goal,
-		NextAction: nextAction,
-		Priority:   priority,
+		RepoPath:      globals.repoPath,
+		Kind:          kind,
+		Title:         title,
+		Goal:          goal,
+		NextAction:    nextAction,
+		Acceptance:    acceptance,
+		Constraints:   constraints,
+		Risks:         risks,
+		RelevantFiles: relevantFiles,
+		Verification:  verification,
+		Priority:      priority,
 	})
 	if err != nil {
 		return 1, err
@@ -384,6 +478,15 @@ func (r Runner) runShow(globals globalOptions, args []string) (int, error) {
 	if err != nil {
 		return 1, err
 	}
+	artifactService := app.ListArtifactsService{}
+	artifacts, err := artifactService.Run(app.ListArtifactsInput{
+		RepoPath: globals.repoPath,
+		ItemID:   itemID,
+		Limit:    3,
+	})
+	if err != nil {
+		return 1, err
+	}
 
 	var events []domain.Event
 	if showHistory {
@@ -401,16 +504,16 @@ func (r Runner) runShow(globals globalOptions, args []string) (int, error) {
 	switch globals.format {
 	case domain.FormatBrief:
 		if showHistory {
-			_, err = fmt.Fprintln(r.stdout, render.ItemWithHistoryBrief(item, events))
+			_, err = fmt.Fprintf(r.stdout, "%s\n%s\n", render.ItemWithHistoryBrief(item, events), render.ArtifactsSectionBrief(artifacts))
 		} else {
-			_, err = fmt.Fprintln(r.stdout, render.ItemShowBrief(item))
+			_, err = fmt.Fprintf(r.stdout, "%s\n%s\n", render.ItemShowBrief(item), render.ArtifactsSectionBrief(artifacts))
 		}
 		return 0, err
 	case domain.FormatPrompt:
 		if showHistory {
-			_, err = fmt.Fprintln(r.stdout, render.ItemWithHistoryPrompt(item, events))
+			_, err = fmt.Fprintf(r.stdout, "%s\n%s\n", render.ItemWithHistoryPrompt(item, events), render.ArtifactsSectionPrompt(artifacts))
 		} else {
-			_, err = fmt.Fprintln(r.stdout, render.ItemShowPrompt(item))
+			_, err = fmt.Fprintf(r.stdout, "%s\n%s\n", render.ItemShowPrompt(item), render.ArtifactsSectionPrompt(artifacts))
 		}
 		return 0, err
 	case domain.FormatJSON:
@@ -1101,6 +1204,81 @@ func (r Runner) runHandoff(globals globalOptions, args []string) (int, error) {
 	}
 }
 
+func (r Runner) runCheckpoint(globals globalOptions, args []string) (int, error) {
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			return r.renderCommandHelp("checkpoint", globals.format)
+		}
+	}
+	if len(args) == 0 {
+		return 2, errors.New("usage: aj checkpoint <id> --summary <summary> [--next <action>] [--risk <text> ...] [--verify <text> ...]")
+	}
+
+	itemID := args[0]
+	summary := ""
+	var nextAction *string
+	var risks []string
+	var verify []string
+
+	for i := 1; i < len(args); i++ {
+		switch args[i] {
+		case "--summary":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --summary")
+			}
+			summary = args[i]
+		case "--next":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --next")
+			}
+			value := args[i]
+			nextAction = &value
+		case "--risk":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --risk")
+			}
+			risks = append(risks, args[i])
+		case "--verify":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --verify")
+			}
+			verify = append(verify, args[i])
+		default:
+			return 2, fmt.Errorf("unknown option for checkpoint: %s", args[i])
+		}
+	}
+
+	service := app.CheckpointItemService{}
+	item, err := service.Run(app.CheckpointItemInput{
+		RepoPath:   globals.repoPath,
+		ItemID:     itemID,
+		Summary:    summary,
+		NextAction: nextAction,
+		Risks:      risks,
+		Verify:     verify,
+	})
+	if err != nil {
+		return 1, err
+	}
+
+	switch globals.format {
+	case domain.FormatBrief:
+		_, err = fmt.Fprintln(r.stdout, render.ItemCheckpointedBrief(item))
+		return 0, err
+	case domain.FormatPrompt:
+		_, err = fmt.Fprintln(r.stdout, render.ItemCheckpointedPrompt(item))
+		return 0, err
+	case domain.FormatJSON:
+		return r.renderJSON(item)
+	default:
+		return 2, fmt.Errorf("unsupported format %q", globals.format)
+	}
+}
+
 func (r Runner) runReopen(globals globalOptions, args []string) (int, error) {
 	for _, arg := range args {
 		if arg == "--help" || arg == "-h" {
@@ -1375,6 +1553,215 @@ func (r Runner) runChanges(globals globalOptions, args []string) (int, error) {
 		return 0, err
 	case domain.FormatJSON:
 		return r.renderJSON(events)
+	default:
+		return 2, fmt.Errorf("unsupported format %q", globals.format)
+	}
+}
+
+func (r Runner) runAttach(globals globalOptions, args []string) (int, error) {
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			return r.renderCommandHelp("attach", globals.format)
+		}
+	}
+	if len(args) == 0 {
+		return 2, errors.New("usage: aj attach <id> --path <path> --summary <summary> [--label <label>]")
+	}
+
+	itemID := args[0]
+	path := ""
+	summary := ""
+	label := ""
+	for i := 1; i < len(args); i++ {
+		switch args[i] {
+		case "--path":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --path")
+			}
+			path = args[i]
+		case "--summary":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --summary")
+			}
+			summary = args[i]
+		case "--label":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --label")
+			}
+			label = args[i]
+		default:
+			return 2, fmt.Errorf("unknown option for attach: %s", args[i])
+		}
+	}
+
+	service := app.AttachArtifactService{}
+	artifact, err := service.Run(app.AttachArtifactInput{
+		RepoPath: globals.repoPath,
+		ItemID:   itemID,
+		Path:     path,
+		Summary:  summary,
+		Label:    label,
+	})
+	if err != nil {
+		return 1, err
+	}
+
+	switch globals.format {
+	case domain.FormatBrief:
+		_, err = fmt.Fprintln(r.stdout, render.ArtifactAttachedBrief(artifact))
+		return 0, err
+	case domain.FormatPrompt:
+		_, err = fmt.Fprintln(r.stdout, render.ArtifactAttachedPrompt(artifact))
+		return 0, err
+	case domain.FormatJSON:
+		return r.renderJSON(artifact)
+	default:
+		return 2, fmt.Errorf("unsupported format %q", globals.format)
+	}
+}
+
+func (r Runner) runReceipt(globals globalOptions, args []string) (int, error) {
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			return r.renderCommandHelp("receipt", globals.format)
+		}
+	}
+	if len(args) == 0 {
+		return 2, errors.New("usage: aj receipt <id> --summary <summary> --command <command> --exit-code <code> [--output <path>] [--label <label>]")
+	}
+
+	itemID := args[0]
+	summary := ""
+	command := ""
+	output := ""
+	label := ""
+	exitCode := 0
+	hasExitCode := false
+
+	for i := 1; i < len(args); i++ {
+		switch args[i] {
+		case "--summary":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --summary")
+			}
+			summary = args[i]
+		case "--command":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --command")
+			}
+			command = args[i]
+		case "--exit-code":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --exit-code")
+			}
+			parsed, err := strconv.Atoi(args[i])
+			if err != nil {
+				return 2, fmt.Errorf("invalid --exit-code value %q", args[i])
+			}
+			exitCode = parsed
+			hasExitCode = true
+		case "--output":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --output")
+			}
+			output = args[i]
+		case "--label":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --label")
+			}
+			label = args[i]
+		default:
+			return 2, fmt.Errorf("unknown option for receipt: %s", args[i])
+		}
+	}
+	if !hasExitCode {
+		return 2, errors.New("missing value for --exit-code")
+	}
+
+	service := app.RecordReceiptService{}
+	artifact, err := service.Run(app.RecordReceiptInput{
+		RepoPath: globals.repoPath,
+		ItemID:   itemID,
+		Summary:  summary,
+		Command:  command,
+		ExitCode: exitCode,
+		Output:   output,
+		Label:    label,
+	})
+	if err != nil {
+		return 1, err
+	}
+
+	switch globals.format {
+	case domain.FormatBrief:
+		_, err = fmt.Fprintln(r.stdout, render.ArtifactAttachedBrief(artifact))
+		return 0, err
+	case domain.FormatPrompt:
+		_, err = fmt.Fprintln(r.stdout, render.ArtifactAttachedPrompt(artifact))
+		return 0, err
+	case domain.FormatJSON:
+		return r.renderJSON(artifact)
+	default:
+		return 2, fmt.Errorf("unsupported format %q", globals.format)
+	}
+}
+
+func (r Runner) runArtifacts(globals globalOptions, args []string) (int, error) {
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			return r.renderCommandHelp("artifacts", globals.format)
+		}
+	}
+	if len(args) == 0 {
+		return 2, errors.New("usage: aj artifacts <id> [--limit <n>]")
+	}
+
+	itemID := args[0]
+	limit := 20
+	for i := 1; i < len(args); i++ {
+		switch args[i] {
+		case "--limit":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --limit")
+			}
+			parsed, err := strconv.Atoi(args[i])
+			if err != nil || parsed < 0 {
+				return 2, fmt.Errorf("invalid --limit value %q", args[i])
+			}
+			limit = parsed
+		default:
+			return 2, fmt.Errorf("unknown option for artifacts: %s", args[i])
+		}
+	}
+
+	service := app.ListArtifactsService{}
+	artifacts, err := service.Run(app.ListArtifactsInput{
+		RepoPath: globals.repoPath,
+		ItemID:   itemID,
+		Limit:    limit,
+	})
+	if err != nil {
+		return 1, err
+	}
+
+	switch globals.format {
+	case domain.FormatBrief:
+		_, err = fmt.Fprintln(r.stdout, render.ArtifactsBrief(artifacts))
+		return 0, err
+	case domain.FormatPrompt:
+		_, err = fmt.Fprintln(r.stdout, render.ArtifactsPrompt(artifacts))
+		return 0, err
+	case domain.FormatJSON:
+		return r.renderJSON(artifacts)
 	default:
 		return 2, fmt.Errorf("unsupported format %q", globals.format)
 	}

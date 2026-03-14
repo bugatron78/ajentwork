@@ -70,6 +70,8 @@ func ItemShowBrief(item domain.Item) string {
 		fmt.Sprintf("Summary: %s", item.Summary),
 		fmt.Sprintf("Next: %s", item.NextAction),
 	}
+	lines = appendContextLines(lines, item)
+	lines = appendCheckpointLines(lines, item)
 	if item.Lease != nil {
 		lines = append(lines, fmt.Sprintf("Lease: %s until %s", item.Lease.Owner, item.Lease.ExpiresAt.Format("2006-01-02T15:04:05Z")))
 	}
@@ -93,6 +95,8 @@ func ItemShowPrompt(item domain.Item) string {
 		"Summary: " + item.Summary,
 		"Next: " + item.NextAction,
 	}
+	lines = appendContextLines(lines, item)
+	lines = appendCheckpointLines(lines, item)
 	if item.Lease != nil {
 		lines = append(lines, "Lease: "+item.Lease.Owner+" until "+item.Lease.ExpiresAt.Format("2006-01-02T15:04:05Z"))
 	}
@@ -103,6 +107,124 @@ func ItemShowPrompt(item domain.Item) string {
 		lines = append(lines, "Depends On: "+strings.Join(item.DependsOn, ", "))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func ArtifactsSectionBrief(artifacts []domain.Artifact) string {
+	if len(artifacts) == 0 {
+		return "Artifacts: none"
+	}
+	lines := []string{"Artifacts:"}
+	for _, artifact := range artifacts {
+		line := fmt.Sprintf("  %s %-7s %s", artifact.CreatedAt.Format("2006-01-02T15:04:05Z"), artifact.Kind, artifact.Summary)
+		if artifact.Kind == domain.ArtifactKindReceipt && artifact.ExitCode != nil {
+			line += fmt.Sprintf(" (exit=%d)", *artifact.ExitCode)
+		}
+		if artifact.StoredPath != "" {
+			line += fmt.Sprintf(" -> %s", artifact.StoredPath)
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func ArtifactsSectionPrompt(artifacts []domain.Artifact) string {
+	if len(artifacts) == 0 {
+		return "Artifacts: none"
+	}
+	lines := []string{"Artifacts:"}
+	for _, artifact := range artifacts {
+		line := fmt.Sprintf("%s %s %s", artifact.ID, artifact.Kind, artifact.Summary)
+		if artifact.Kind == domain.ArtifactKindReceipt && artifact.ExitCode != nil {
+			line += fmt.Sprintf(" exit=%d", *artifact.ExitCode)
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func ArtifactsBrief(artifacts []domain.Artifact) string {
+	if len(artifacts) == 0 {
+		return "No artifacts found."
+	}
+	lines := make([]string, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		line := fmt.Sprintf("%s %-12s %-7s %s", artifact.CreatedAt.Format("2006-01-02T15:04:05Z"), artifact.ID, artifact.Kind, artifact.Summary)
+		if artifact.Kind == domain.ArtifactKindReceipt && artifact.ExitCode != nil {
+			line += fmt.Sprintf(" (exit=%d)", *artifact.ExitCode)
+		}
+		if artifact.StoredPath != "" {
+			line += fmt.Sprintf(" -> %s", artifact.StoredPath)
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func ArtifactsPrompt(artifacts []domain.Artifact) string {
+	if len(artifacts) == 0 {
+		return "Artifacts: none"
+	}
+	lines := []string{fmt.Sprintf("Artifacts: %d", len(artifacts))}
+	for _, artifact := range artifacts {
+		line := fmt.Sprintf("%s %s %s", artifact.ID, artifact.Kind, artifact.Summary)
+		if artifact.ExitCode != nil {
+			line += fmt.Sprintf(" exit=%d", *artifact.ExitCode)
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func ArtifactAttachedBrief(artifact domain.Artifact) string {
+	return fmt.Sprintf("attached %s to %s", artifact.ID, artifact.ItemID)
+}
+
+func ArtifactAttachedPrompt(artifact domain.Artifact) string {
+	lines := []string{
+		"Status: attached",
+		"Item: " + artifact.ItemID,
+		"Artifact: " + artifact.ID,
+		"Kind: " + string(artifact.Kind),
+		"Summary: " + artifact.Summary,
+	}
+	if artifact.StoredPath != "" {
+		lines = append(lines, "Stored: "+artifact.StoredPath)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func appendContextLines(lines []string, item domain.Item) []string {
+	if len(item.Acceptance) > 0 {
+		lines = append(lines, "Acceptance: "+strings.Join(item.Acceptance, "; "))
+	}
+	if len(item.Constraints) > 0 {
+		lines = append(lines, "Constraints: "+strings.Join(item.Constraints, "; "))
+	}
+	if len(item.Risks) > 0 {
+		lines = append(lines, "Risks: "+strings.Join(item.Risks, "; "))
+	}
+	if len(item.RelevantFiles) > 0 {
+		lines = append(lines, "Relevant Files: "+strings.Join(item.RelevantFiles, ", "))
+	}
+	if len(item.Verification) > 0 {
+		lines = append(lines, "Verification: "+strings.Join(item.Verification, "; "))
+	}
+	return lines
+}
+
+func appendCheckpointLines(lines []string, item domain.Item) []string {
+	if item.Checkpoint == nil {
+		return lines
+	}
+	lines = append(lines, "Checkpoint: "+item.Checkpoint.Summary)
+	if len(item.Checkpoint.Risks) > 0 {
+		lines = append(lines, "Checkpoint Risks: "+strings.Join(item.Checkpoint.Risks, "; "))
+	}
+	if len(item.Checkpoint.Verify) > 0 {
+		lines = append(lines, "Checkpoint Verify: "+strings.Join(item.Checkpoint.Verify, "; "))
+	}
+	lines = append(lines, "Checkpoint At: "+item.Checkpoint.CreatedAt.Format("2006-01-02T15:04:05Z"))
+	return lines
 }
 
 func ItemWithHistoryBrief(item domain.Item, events []domain.Event) string {
@@ -234,6 +356,33 @@ func ItemHandedOffPrompt(item domain.Item) string {
 	}
 	if item.NextAction != "" {
 		lines = append(lines, "Next: "+item.NextAction)
+	}
+	if item.Checkpoint != nil {
+		lines = append(lines, "Checkpoint: "+item.Checkpoint.Summary)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func ItemCheckpointedBrief(item domain.Item) string {
+	return fmt.Sprintf("checkpointed %s %s", item.ID, item.Summary)
+}
+
+func ItemCheckpointedPrompt(item domain.Item) string {
+	lines := []string{
+		"Status: checkpointed",
+		"ID: " + item.ID,
+		"Summary: " + item.Summary,
+	}
+	if item.NextAction != "" {
+		lines = append(lines, "Next: "+item.NextAction)
+	}
+	if item.Checkpoint != nil {
+		if len(item.Checkpoint.Risks) > 0 {
+			lines = append(lines, "Risks: "+strings.Join(item.Checkpoint.Risks, "; "))
+		}
+		if len(item.Checkpoint.Verify) > 0 {
+			lines = append(lines, "Verify: "+strings.Join(item.Checkpoint.Verify, "; "))
+		}
 	}
 	return strings.Join(lines, "\n")
 }

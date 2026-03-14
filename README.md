@@ -15,15 +15,38 @@
 
 - Titles should name the concrete problem or outcome.
 - Goals should explain why the work matters, important constraints, and where acceptance evidence will come from.
+- Use `aj new --accept ... --constraint ... --risk ... --file ... --verify ...` when those details would help another agent execute accurately without rediscovering the same context.
 - Progress, block, handoff, and done summaries should say what changed, what was learned, and what risk or verification remains.
 - Next actions should be specific enough that another agent can start work without rereading the whole repo.
 
 Use `aj workflows authoring` and `aj examples authoring` for copyable examples.
 
+## Evidence And Receipts
+
+Use artifacts when another agent will need proof of what was tried or what happened:
+
+- `aj attach <id> --path <file> --summary "..."` copies a supporting file like a log, patch, or note into `.aj/artifacts/`.
+- `aj receipt <id> --summary "..." --command "..." --exit-code <n> [--output <file>]` records a compact execution receipt for a build, test, or verification step.
+- `aj artifacts <id>` lists the attached evidence for one item, and `aj show <id>` includes the latest artifact summaries.
+
+## Checkpoints And Handoffs
+
+Use checkpoints when another agent may need to resume work later, even if you are not transferring the lease yet:
+
+- `aj checkpoint <id> --summary "..." [--next "..."] [--risk "..."] [--verify "..."]` records a compact resume point.
+- `aj show <id>` surfaces the latest checkpoint summary, remaining risks, and verification guidance.
+- `aj handoff ...` still transfers ownership; checkpoints make the handoff payload better before that transfer happens.
+
 ## Build
 
 ```bash
 go build ./cmd/aj
+```
+
+Check the installed binary version:
+
+```bash
+aj --version
 ```
 
 Generate the man page:
@@ -154,7 +177,7 @@ Artifacts are written to `dist/`:
 1. Extract the archive for your platform.
 2. Move `aj` onto your `PATH`.
 3. Optionally copy `share/man/man1/aj.1` into your preferred man directory.
-4. Run `aj --help` or `man ./share/man/man1/aj.1`.
+4. Run `aj --version`, `aj --help`, or `man ./share/man/man1/aj.1`.
 
 ## Releases
 

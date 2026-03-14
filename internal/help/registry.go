@@ -25,22 +25,40 @@ func DefaultRegistry() Registry {
 
 	commands := []Doc{
 		{
+			Name:    "version",
+			Summary: "show the installed aj build version",
+			Purpose: "Print the current aj build version so agents and humans can confirm which binary is installed.",
+			Usage:   "aj version",
+			Examples: []ExampleDoc{
+				{Label: "Show version", Command: "aj version"},
+				{Label: "Show version with the global flag", Command: "aj --version"},
+			},
+			Related:        []string{"help", "commands"},
+			WorkflowTags:   []string{"discovery"},
+			SearchKeywords: []string{"version", "build", "release"},
+		},
+		{
 			Name:    "new",
 			Summary: "create a local work item",
-			Purpose: "Create a new local aj work item with a compact snapshot and an initial created event. The title, goal, and next action should give another agent enough context to start confidently.",
-			Usage:   "aj new --kind <kind> --title <title> --goal <goal> --next <action> [--priority 2]",
+			Purpose: "Create a new local aj work item with a compact snapshot and an initial created event. The title, goal, and next action should give another agent enough context to start confidently, and structured fields should capture acceptance criteria, constraints, risks, relevant files, and verification expectations whenever they matter.",
+			Usage:   "aj new --kind <kind> --title <title> --goal <goal> --next <action> [--accept <text> ...] [--constraint <text> ...] [--risk <text> ...] [--file <path> ...] [--verify <text> ...] [--priority 2]",
 			Options: []OptionDoc{
 				{Name: "--kind <kind>", Description: "required item kind: bug, feature, task, spike, or epic"},
 				{Name: "--title <title>", Description: "required short work item title"},
 				{Name: "--goal <goal>", Description: "required problem statement or desired outcome"},
 				{Name: "--next <action>", Description: "required immediate next action for the agent"},
+				{Name: "--accept <text>", Description: "optional acceptance criterion; repeat to capture multiple outcomes"},
+				{Name: "--constraint <text>", Description: "optional implementation or product constraint; repeat as needed"},
+				{Name: "--risk <text>", Description: "optional known risk or uncertainty; repeat as needed"},
+				{Name: "--file <path>", Description: "optional relevant file path or area to inspect first; repeat as needed"},
+				{Name: "--verify <text>", Description: "optional verification step or evidence expectation; repeat as needed"},
 				{Name: "--priority <0-4>", Description: "priority where 0 is highest and 4 is lowest; default 2"},
 			},
 			Examples: []ExampleDoc{
-				{Label: "Create a bug with context", Command: "aj new --kind bug --title \"Fix cache invalidation after deletes\" --goal \"restore correct invalidation for delete paths; reproduce with the regression in cache/service_test.go and preserve update-path behavior\" --next \"trace the delete invalidation branch and capture the failing test\""},
+				{Label: "Create a bug with structured context", Command: "aj new --kind bug --title \"Fix cache invalidation after deletes\" --goal \"restore correct invalidation for delete paths; reproduce with the regression in cache/service_test.go and preserve update-path behavior\" --next \"trace the delete invalidation branch and capture the failing test\" --accept \"delete invalidates stale cache entries\" --accept \"update-path behavior stays correct\" --constraint \"keep cache key format backward compatible during rollout\" --risk \"soft-delete path may share logic with tenant invalidation\" --file cache/service.go --file cache/service_test.go --verify \"run go test ./... and confirm the delete regression passes\""},
 			},
 			Related:        []string{"ls", "show", "init"},
-			Safety:         []string{"Write goal and next so another agent can understand the problem, the important constraints, and the immediate starting point without reopening the whole repo first."},
+			Safety:         []string{"Write goal and next so another agent can understand the problem, the important constraints, and the immediate starting point without reopening the whole repo first.", "Use structured fields when they materially change execution quality: acceptance for success criteria, constraints for guardrails, risks for uncertainties, relevant files for starting points, and verification for proof."},
 			WorkflowTags:   []string{"core", "create"},
 			SearchKeywords: []string{"create", "item", "ticket", "context", "authoring"},
 		},
@@ -222,6 +240,28 @@ func DefaultRegistry() Registry {
 			SearchKeywords: []string{"handoff", "transfer", "lease", "context", "authoring"},
 		},
 		{
+			Name:    "checkpoint",
+			Summary: "record a compact resume point without transferring ownership",
+			Purpose: "Capture what changed, what remains risky, and what the next agent should verify so work can resume cleanly later even if ownership does not change yet.",
+			Usage:   "aj checkpoint <id> --summary <summary> [--next <action>] [--risk <text> ...] [--verify <text> ...]",
+			Arguments: []ArgDoc{
+				{Name: "id", Description: "required work item identifier such as W-8F3K2P1Q", Required: true},
+			},
+			Options: []OptionDoc{
+				{Name: "--summary <summary>", Description: "required compact checkpoint summary"},
+				{Name: "--next <action>", Description: "optional replacement next action for whoever resumes the work"},
+				{Name: "--risk <text>", Description: "optional remaining risk or uncertainty; repeat as needed"},
+				{Name: "--verify <text>", Description: "optional thing the next agent should verify; repeat as needed"},
+			},
+			Examples: []ExampleDoc{
+				{Label: "Record a checkpoint", Command: "aj checkpoint W-8F3K2P1Q --summary \"export path is fixed; remaining risk is Jira projects with nonstandard transition names\" --next \"smoke-test against SD and inspect transitions output\" --risk \"mapped status names may not exist on all boards\" --verify \"run aj jira transitions <id> before syncing\""},
+			},
+			Related:        []string{"handoff", "show", "update"},
+			Safety:         []string{"Use checkpoints when another agent may need to resume later, even if you are not transferring the lease yet.", "A good checkpoint should say what changed, the main remaining risks, and what to verify next."},
+			WorkflowTags:   []string{"coordination", "handoff", "checkpoint"},
+			SearchKeywords: []string{"checkpoint", "resume", "handoff", "continue", "risks", "verify"},
+		},
+		{
 			Name:    "reopen",
 			Summary: "reopen completed work with a fresh next action",
 			Purpose: "Move a done item back into active work when follow-up or regression handling is needed.",
@@ -306,6 +346,68 @@ func DefaultRegistry() Registry {
 			Related:        []string{"show", "inbox", "next"},
 			WorkflowTags:   []string{"coordination", "history"},
 			SearchKeywords: []string{"history", "events", "activity"},
+		},
+		{
+			Name:    "attach",
+			Summary: "attach a durable file artifact to a work item",
+			Purpose: "Copy a supporting file such as a log, patch, screenshot, or note into .aj/artifacts and record a compact summary so another agent can inspect the evidence later.",
+			Usage:   "aj attach <id> --path <path> --summary <summary> [--label <label>]",
+			Arguments: []ArgDoc{
+				{Name: "id", Description: "required work item identifier such as W-8F3K2P1Q", Required: true},
+			},
+			Options: []OptionDoc{
+				{Name: "--path <path>", Description: "required file path to copy into .aj/artifacts"},
+				{Name: "--summary <summary>", Description: "required compact explanation of why the artifact matters"},
+				{Name: "--label <label>", Description: "optional short label for the artifact"},
+			},
+			Examples: []ExampleDoc{
+				{Label: "Attach a failing test log", Command: "aj attach W-8F3K2P1Q --path /tmp/go-test.log --summary \"failing regression output before the cache fix\" --label pre-fix-log"},
+			},
+			Related:        []string{"receipt", "artifacts", "show"},
+			Safety:         []string{"Summaries should explain what the file proves or why another agent should inspect it; avoid attaching huge files unless they materially help verification."},
+			WorkflowTags:   []string{"evidence", "artifacts"},
+			SearchKeywords: []string{"artifact", "attach", "log", "evidence", "receipt"},
+		},
+		{
+			Name:    "receipt",
+			Summary: "record a compact execution receipt for a work item",
+			Purpose: "Record a command, exit status, and optional output file as durable evidence that a test, build, or verification step was attempted.",
+			Usage:   "aj receipt <id> --summary <summary> --command <command> --exit-code <code> [--output <path>] [--label <label>]",
+			Arguments: []ArgDoc{
+				{Name: "id", Description: "required work item identifier such as W-8F3K2P1Q", Required: true},
+			},
+			Options: []OptionDoc{
+				{Name: "--summary <summary>", Description: "required compact explanation of the command result"},
+				{Name: "--command <command>", Description: "required command that was run"},
+				{Name: "--exit-code <code>", Description: "required integer exit code from the command"},
+				{Name: "--output <path>", Description: "optional output file to copy into .aj/artifacts"},
+				{Name: "--label <label>", Description: "optional short label for the receipt"},
+			},
+			Examples: []ExampleDoc{
+				{Label: "Record a test run", Command: "aj receipt W-8F3K2P1Q --summary \"go test failed in cache package before the fix\" --command \"go test ./...\" --exit-code 1 --output /tmp/go-test.log --label test-failure"},
+			},
+			Related:        []string{"attach", "artifacts", "show"},
+			Safety:         []string{"Use receipts for compact build or test evidence, not full shell transcripts; the summary should say what another agent should conclude from the command result."},
+			WorkflowTags:   []string{"evidence", "artifacts"},
+			SearchKeywords: []string{"receipt", "test", "command", "artifact", "evidence"},
+		},
+		{
+			Name:    "artifacts",
+			Summary: "list artifacts attached to one work item",
+			Purpose: "Show the durable artifacts and execution receipts recorded for a work item so another agent can inspect evidence quickly.",
+			Usage:   "aj artifacts <id> [--limit <n>]",
+			Arguments: []ArgDoc{
+				{Name: "id", Description: "required work item identifier such as W-8F3K2P1Q", Required: true},
+			},
+			Options: []OptionDoc{
+				{Name: "--limit <n>", Description: "optional max number of artifacts to return; default 20"},
+			},
+			Examples: []ExampleDoc{
+				{Label: "List one item's artifacts", Command: "aj artifacts W-8F3K2P1Q --limit 10"},
+			},
+			Related:        []string{"attach", "receipt", "show"},
+			WorkflowTags:   []string{"evidence", "artifacts"},
+			SearchKeywords: []string{"artifact", "evidence", "receipts", "logs"},
 		},
 		{
 			Name:    "ready",
@@ -484,7 +586,7 @@ func DefaultRegistry() Registry {
 			Topic: "write tickets and updates with enough context for another agent to continue the work",
 			Steps: []string{
 				"1. Make the title describe the concrete problem or outcome, not just an activity like \"work on sync\".",
-				"2. Use the goal to explain why the work matters, the important constraints, and any acceptance clues or evidence sources.",
+				"2. Use the goal to explain why the work matters, then add structured fields for acceptance criteria, constraints, risks, relevant files, and verification whenever they would help another agent execute accurately.",
 				"3. Use progress, block, handoff, and done summaries to explain what changed, what was learned, and what risk or uncertainty remains.",
 				"4. Make next actions concrete enough that another agent can start from them without rereading the whole codebase.",
 			},
@@ -507,6 +609,27 @@ func DefaultRegistry() Registry {
 				"3. Use `aj done <id> --summary \"...\"` when the item is complete.",
 			},
 		},
+		"checkpoint": {
+			Name:  "checkpoint",
+			Topic: "leave a compact resume point before pausing or handing work off",
+			Steps: []string{
+				"1. Use `aj checkpoint <id> --summary \"...\"` when you have meaningful state another agent should inherit later.",
+				"2. Add `--risk \"...\"` entries for the main uncertainties or sharp edges that remain.",
+				"3. Add `--verify \"...\"` entries for the checks the next agent should run or inspect.",
+				"4. Add `--next \"...\"` when the best next action changed and should be explicit in the snapshot.",
+				"5. Use `aj handoff ...` after the checkpoint when ownership is actually changing.",
+			},
+		},
+		"evidence": {
+			Name:  "evidence",
+			Topic: "attach proof so another agent can verify what was tried and what happened",
+			Steps: []string{
+				"1. Use `aj receipt <id> --summary \"...\" --command \"...\" --exit-code <n>` after an important build, test, or verification command.",
+				"2. Add `--output /path/to/log` when the command produced a log another agent may need to inspect.",
+				"3. Use `aj attach <id> --path /path/to/file --summary \"...\"` for patches, screenshots, notes, or other supporting evidence.",
+				"4. Use `aj show <id>` or `aj artifacts <id>` to confirm the evidence is attached with a useful summary.",
+			},
+		},
 		"claim": {
 			Name:  "claim",
 			Topic: "claim and release work so agents do not overlap",
@@ -520,9 +643,10 @@ func DefaultRegistry() Registry {
 			Name:  "handoff",
 			Topic: "transfer ownership without losing context",
 			Steps: []string{
-				"1. Use `aj show <id>` before handing work off so the current snapshot is accurate.",
-				"2. Use `aj handoff <id> --to reviewer-1 --summary \"...\" --next \"...\"` to transfer the lease.",
-				"3. Use `aj inbox --agent reviewer-1` or `aj next --agent reviewer-1` so the receiving agent can pick it up immediately.",
+				"1. Use `aj checkpoint <id> --summary \"...\" --risk \"...\" --verify \"...\"` first when the current state needs a stronger resume point.",
+				"2. Use `aj show <id>` before handing work off so the current snapshot is accurate.",
+				"3. Use `aj handoff <id> --to reviewer-1 --summary \"...\" --next \"...\"` to transfer the lease.",
+				"4. Use `aj inbox --agent reviewer-1` or `aj next --agent reviewer-1` so the receiving agent can pick it up immediately.",
 			},
 		},
 		"queue": {
@@ -601,6 +725,12 @@ func DefaultRegistry() Registry {
 				{Label: "Hand off work", Command: "aj handoff W-8F3K2P1Q --to reviewer-1 --summary \"implementation ready\" --next \"review CLI output\""},
 			},
 		},
+		"checkpoint": {
+			Topic: "checkpoint",
+			Examples: []ExampleDoc{
+				{Label: "Leave a resume point", Command: "aj checkpoint W-8F3K2P1Q --summary \"status alignment is fixed; remaining risk is Jira projects without the mapped transition\" --next \"smoke-test a second project\" --risk \"transition names may differ by workflow\" --verify \"run aj jira transitions <id> before sync\""},
+			},
+		},
 		"queue": {
 			Topic: "queue",
 			Examples: []ExampleDoc{
@@ -647,9 +777,18 @@ func DefaultRegistry() Registry {
 		"authoring": {
 			Topic: "authoring",
 			Examples: []ExampleDoc{
-				{Label: "Create a context-rich item", Command: "aj new --kind feature --title \"Align Jira status on export\" --goal \"ensure jira push lands exported issues in the correct Jira workflow state and keep existing export-only links repairable\" --next \"patch export to transition after create and add regression coverage\""},
+				{Label: "Create a context-rich item", Command: "aj new --kind feature --title \"Align Jira status on export\" --goal \"ensure jira push lands exported issues in the correct Jira workflow state and keep existing export-only links repairable\" --next \"patch export to transition after create and add regression coverage\" --accept \"newly exported issues land in the mapped Jira status\" --accept \"older export-only links can be repaired with sync\" --constraint \"do not regress import-only links\" --risk \"some Jira projects may not expose the desired transition name\" --file internal/store/item.go --file internal/jira/client.go --verify \"run go test ./... and smoke-test against SD\""},
 				{Label: "Write a useful progress update", Command: "aj update W-8F3K2P1Q --summary \"export now records remote versions, but old export-only links still need a repair path\" --next \"treat empty last_remote_version as dirty_local and verify with a live sync\""},
+				{Label: "Leave a reusable checkpoint", Command: "aj checkpoint W-8F3K2P1Q --summary \"status alignment is fixed; remaining risk is Jira projects without the mapped transition\" --next \"smoke-test a second project\" --risk \"transition names may differ by workflow\" --verify \"run aj jira transitions <id> before sync\""},
 				{Label: "Write a handoff another agent can use", Command: "aj handoff W-8F3K2P1Q --to reviewer-1 --summary \"status alignment is fixed; main remaining risk is Jira projects that lack the mapped transition names\" --next \"verify the live SD board and inspect transition diagnostics output\""},
+			},
+		},
+		"evidence": {
+			Topic: "evidence",
+			Examples: []ExampleDoc{
+				{Label: "Record a failing test receipt", Command: "aj receipt W-8F3K2P1Q --summary \"cache regression still fails before the fix\" --command \"go test ./...\" --exit-code 1 --output /tmp/go-test.log --label pre-fix-test"},
+				{Label: "Attach a patch for review", Command: "aj attach W-8F3K2P1Q --path /tmp/cache-fix.patch --summary \"candidate patch for cache invalidation review\" --label patch"},
+				{Label: "Inspect attached evidence", Command: "aj artifacts W-8F3K2P1Q --limit 10"},
 			},
 		},
 	}

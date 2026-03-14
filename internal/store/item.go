@@ -18,12 +18,17 @@ import (
 )
 
 type CreateItemOptions struct {
-	RepoPath   string
-	Kind       domain.ItemKind
-	Title      string
-	Goal       string
-	NextAction string
-	Priority   int
+	RepoPath      string
+	Kind          domain.ItemKind
+	Title         string
+	Goal          string
+	NextAction    string
+	Acceptance    []string
+	Constraints   []string
+	Risks         []string
+	RelevantFiles []string
+	Verification  []string
+	Priority      int
 }
 
 type UpdateItemOptions struct {
@@ -84,6 +89,15 @@ type ReopenItemOptions struct {
 	Summary    string
 	NextAction string
 	Status     *domain.Status
+}
+
+type CheckpointItemOptions struct {
+	RepoPath   string
+	ItemID     string
+	Summary    string
+	NextAction *string
+	Risks      []string
+	Verify     []string
 }
 
 type LinkDependencyOptions struct {
@@ -257,16 +271,21 @@ func CreateItem(opts CreateItemOptions) (domain.Item, error) {
 
 	now := time.Now().UTC().Truncate(time.Second)
 	item := domain.Item{
-		ID:         itemID,
-		Kind:       opts.Kind,
-		Title:      strings.TrimSpace(opts.Title),
-		Status:     domain.StatusTodo,
-		Priority:   opts.Priority,
-		CreatedAt:  now,
-		UpdatedAt:  now,
-		Goal:       strings.TrimSpace(opts.Goal),
-		Summary:    "created",
-		NextAction: strings.TrimSpace(opts.NextAction),
+		ID:            itemID,
+		Kind:          opts.Kind,
+		Title:         strings.TrimSpace(opts.Title),
+		Status:        domain.StatusTodo,
+		Priority:      opts.Priority,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+		Goal:          strings.TrimSpace(opts.Goal),
+		Summary:       "created",
+		NextAction:    strings.TrimSpace(opts.NextAction),
+		Acceptance:    normalizeStringList(opts.Acceptance),
+		Constraints:   normalizeStringList(opts.Constraints),
+		Risks:         normalizeStringList(opts.Risks),
+		RelevantFiles: normalizeStringList(opts.RelevantFiles),
+		Verification:  normalizeStringList(opts.Verification),
 	}
 
 	itemDir := filepath.Join(ajDir, "issues", item.ID)
@@ -627,6 +646,45 @@ func ReopenItem(opts ReopenItemOptions) (domain.Item, error) {
 	markJiraDirtyLocal(&item)
 	item.UpdatedAt = time.Now().UTC().Truncate(time.Second)
 	if err := persistItemMutation(itemDir, item, "reopened", "system", item.Summary); err != nil {
+		return domain.Item{}, err
+	}
+	return item, nil
+}
+
+func CheckpointItem(opts CheckpointItemOptions) (domain.Item, error) {
+	if strings.TrimSpace(opts.ItemID) == "" {
+		return domain.Item{}, errors.New("item id is required")
+	}
+	if strings.TrimSpace(opts.Summary) == "" {
+		return domain.Item{}, errors.New("summary is required")
+	}
+
+	item, itemDir, err := loadItemForMutation(opts.RepoPath, opts.ItemID)
+	if err != nil {
+		return domain.Item{}, err
+	}
+	if item.Status == domain.StatusDone || item.Status == domain.StatusCanceled {
+		return domain.Item{}, fmt.Errorf("item %s is already complete", item.ID)
+	}
+
+	now := time.Now().UTC().Truncate(time.Second)
+	item.Summary = strings.TrimSpace(opts.Summary)
+	if opts.NextAction != nil {
+		item.NextAction = strings.TrimSpace(*opts.NextAction)
+	}
+	if domain.StatusRequiresNextAction(item.Status) && strings.TrimSpace(item.NextAction) == "" {
+		return domain.Item{}, fmt.Errorf("status %s requires a next action", item.Status)
+	}
+	item.Checkpoint = &domain.Checkpoint{
+		Summary:   item.Summary,
+		Risks:     normalizeStringList(opts.Risks),
+		Verify:    normalizeStringList(opts.Verify),
+		CreatedAt: now,
+		Actor:     "agent",
+	}
+	markJiraDirtyLocal(&item)
+	item.UpdatedAt = now
+	if err := persistItemMutation(itemDir, item, "checkpoint", "agent", item.Summary); err != nil {
 		return domain.Item{}, err
 	}
 	return item, nil
@@ -1840,6 +1898,18 @@ func marshalItem(item domain.Item) string {
 	lines = append(lines, fmt.Sprintf("goal = %s", strconv.Quote(item.Goal)))
 	lines = append(lines, fmt.Sprintf("summary = %s", strconv.Quote(item.Summary)))
 	lines = append(lines, fmt.Sprintf("next_action = %s", strconv.Quote(item.NextAction)))
+	lines = append(lines, fmt.Sprintf("acceptance = %s", marshalStringList(item.Acceptance)))
+	lines = append(lines, fmt.Sprintf("constraints = %s", marshalStringList(item.Constraints)))
+	lines = append(lines, fmt.Sprintf("risks = %s", marshalStringList(item.Risks)))
+	lines = append(lines, fmt.Sprintf("relevant_files = %s", marshalStringList(item.RelevantFiles)))
+	lines = append(lines, fmt.Sprintf("verification = %s", marshalStringList(item.Verification)))
+	if item.Checkpoint != nil {
+		lines = append(lines, fmt.Sprintf("checkpoint_summary = %s", strconv.Quote(item.Checkpoint.Summary)))
+		lines = append(lines, fmt.Sprintf("checkpoint_risks = %s", marshalStringList(item.Checkpoint.Risks)))
+		lines = append(lines, fmt.Sprintf("checkpoint_verify = %s", marshalStringList(item.Checkpoint.Verify)))
+		lines = append(lines, fmt.Sprintf("checkpoint_created_at = %s", strconv.Quote(item.Checkpoint.CreatedAt.Format(time.RFC3339))))
+		lines = append(lines, fmt.Sprintf("checkpoint_actor = %s", strconv.Quote(item.Checkpoint.Actor)))
+	}
 	lines = append(lines, fmt.Sprintf("depends_on = %s", marshalStringList(item.DependsOn)))
 	if item.Lease != nil {
 		lines = append(lines, fmt.Sprintf("lease_owner = %s", strconv.Quote(item.Lease.Owner)))
@@ -1948,6 +2018,56 @@ func parseItem(raw string) (domain.Item, error) {
 	if err != nil {
 		return domain.Item{}, err
 	}
+	acceptance, err := parseStringList(values["acceptance"])
+	if err != nil {
+		return domain.Item{}, fmt.Errorf("parse acceptance: %w", err)
+	}
+	constraints, err := parseStringList(values["constraints"])
+	if err != nil {
+		return domain.Item{}, fmt.Errorf("parse constraints: %w", err)
+	}
+	risks, err := parseStringList(values["risks"])
+	if err != nil {
+		return domain.Item{}, fmt.Errorf("parse risks: %w", err)
+	}
+	relevantFiles, err := parseStringList(values["relevant_files"])
+	if err != nil {
+		return domain.Item{}, fmt.Errorf("parse relevant_files: %w", err)
+	}
+	verification, err := parseStringList(values["verification"])
+	if err != nil {
+		return domain.Item{}, fmt.Errorf("parse verification: %w", err)
+	}
+	var checkpoint *domain.Checkpoint
+	if _, ok := values["checkpoint_summary"]; ok {
+		checkpointSummary, err := requiredString("checkpoint_summary")
+		if err != nil {
+			return domain.Item{}, err
+		}
+		checkpointRisks, err := parseStringList(values["checkpoint_risks"])
+		if err != nil {
+			return domain.Item{}, fmt.Errorf("parse checkpoint_risks: %w", err)
+		}
+		checkpointVerify, err := parseStringList(values["checkpoint_verify"])
+		if err != nil {
+			return domain.Item{}, fmt.Errorf("parse checkpoint_verify: %w", err)
+		}
+		checkpointCreatedAt, err := parseTime("checkpoint_created_at")
+		if err != nil {
+			return domain.Item{}, err
+		}
+		checkpointActor, err := requiredString("checkpoint_actor")
+		if err != nil {
+			return domain.Item{}, err
+		}
+		checkpoint = &domain.Checkpoint{
+			Summary:   checkpointSummary,
+			Risks:     checkpointRisks,
+			Verify:    checkpointVerify,
+			CreatedAt: checkpointCreatedAt,
+			Actor:     checkpointActor,
+		}
+	}
 	dependsOn, err := parseStringList(values["depends_on"])
 	if err != nil {
 		return domain.Item{}, fmt.Errorf("parse depends_on: %w", err)
@@ -2020,19 +2140,25 @@ func parseItem(raw string) (domain.Item, error) {
 	}
 
 	return domain.Item{
-		ID:         id,
-		Kind:       kind,
-		Title:      title,
-		Status:     domain.Status(statusRaw),
-		Priority:   priority,
-		CreatedAt:  createdAt,
-		UpdatedAt:  updatedAt,
-		Goal:       goal,
-		Summary:    summary,
-		NextAction: nextAction,
-		DependsOn:  dependsOn,
-		Lease:      lease,
-		Jira:       jiraLink,
+		ID:            id,
+		Kind:          kind,
+		Title:         title,
+		Status:        domain.Status(statusRaw),
+		Priority:      priority,
+		CreatedAt:     createdAt,
+		UpdatedAt:     updatedAt,
+		Goal:          goal,
+		Summary:       summary,
+		NextAction:    nextAction,
+		Acceptance:    acceptance,
+		Constraints:   constraints,
+		Risks:         risks,
+		RelevantFiles: relevantFiles,
+		Verification:  verification,
+		Checkpoint:    checkpoint,
+		DependsOn:     dependsOn,
+		Lease:         lease,
+		Jira:          jiraLink,
 	}, nil
 }
 
@@ -2110,8 +2236,26 @@ func parseStringList(raw string) ([]string, error) {
 		}
 		result = append(result, value)
 	}
-	sort.Strings(result)
 	return result, nil
+}
+
+func normalizeStringList(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+
+	normalized := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		normalized = append(normalized, value)
+	}
+	if len(normalized) == 0 {
+		return nil
+	}
+	return normalized
 }
 
 func parseEventFile(path string) (domain.Event, error) {

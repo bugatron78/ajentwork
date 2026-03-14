@@ -38,19 +38,33 @@ func ParseStatus(value string) (Status, error) {
 }
 
 type Item struct {
-	ID         string    `json:"id"`
-	Kind       ItemKind  `json:"kind"`
-	Title      string    `json:"title"`
-	Status     Status    `json:"status"`
-	Priority   int       `json:"priority"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
-	Goal       string    `json:"goal"`
-	Summary    string    `json:"summary"`
-	NextAction string    `json:"next_action"`
-	DependsOn  []string  `json:"depends_on,omitempty"`
-	Lease      *Lease    `json:"lease,omitempty"`
-	Jira       *JiraLink `json:"jira,omitempty"`
+	ID            string      `json:"id"`
+	Kind          ItemKind    `json:"kind"`
+	Title         string      `json:"title"`
+	Status        Status      `json:"status"`
+	Priority      int         `json:"priority"`
+	CreatedAt     time.Time   `json:"created_at"`
+	UpdatedAt     time.Time   `json:"updated_at"`
+	Goal          string      `json:"goal"`
+	Summary       string      `json:"summary"`
+	NextAction    string      `json:"next_action"`
+	Acceptance    []string    `json:"acceptance,omitempty"`
+	Constraints   []string    `json:"constraints,omitempty"`
+	Risks         []string    `json:"risks,omitempty"`
+	RelevantFiles []string    `json:"relevant_files,omitempty"`
+	Verification  []string    `json:"verification,omitempty"`
+	Checkpoint    *Checkpoint `json:"checkpoint,omitempty"`
+	DependsOn     []string    `json:"depends_on,omitempty"`
+	Lease         *Lease      `json:"lease,omitempty"`
+	Jira          *JiraLink   `json:"jira,omitempty"`
+}
+
+type Checkpoint struct {
+	Summary   string    `json:"summary"`
+	Risks     []string  `json:"risks,omitempty"`
+	Verify    []string  `json:"verify,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	Actor     string    `json:"actor"`
 }
 
 type Lease struct {
