@@ -54,6 +54,7 @@ type Item struct {
 	RelevantFiles []string    `json:"relevant_files,omitempty"`
 	Verification  []string    `json:"verification,omitempty"`
 	Checkpoint    *Checkpoint `json:"checkpoint,omitempty"`
+	ParentID      string      `json:"parent_id,omitempty"`
 	DependsOn     []string    `json:"depends_on,omitempty"`
 	Lease         *Lease      `json:"lease,omitempty"`
 	Jira          *JiraLink   `json:"jira,omitempty"`

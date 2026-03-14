@@ -620,6 +620,111 @@ func TestLinkDependencyAffectsReadiness(t *testing.T) {
 	}
 }
 
+func TestParentLinksUnlinkAndCycleProtection(t *testing.T) {
+	repo := t.TempDir()
+	if _, err := InitRepo(InitOptions{RepoPath: repo}); err != nil {
+		t.Fatalf("init repo: %v", err)
+	}
+
+	epic, err := CreateItem(CreateItemOptions{
+		RepoPath:   repo,
+		Kind:       domain.KindEpic,
+		Title:      "Epic",
+		Goal:       "Track a larger body of work",
+		NextAction: "Break work down",
+		Priority:   1,
+	})
+	if err != nil {
+		t.Fatalf("create epic: %v", err)
+	}
+	child, err := CreateItem(CreateItemOptions{
+		RepoPath:   repo,
+		Kind:       domain.KindTask,
+		Title:      "Child",
+		Goal:       "Ship one slice",
+		NextAction: "Link hierarchy",
+		Priority:   1,
+	})
+	if err != nil {
+		t.Fatalf("create child: %v", err)
+	}
+	dependency, err := CreateItem(CreateItemOptions{
+		RepoPath:   repo,
+		Kind:       domain.KindTask,
+		Title:      "Dependency",
+		Goal:       "Enable child work",
+		NextAction: "Link dependency",
+		Priority:   1,
+	})
+	if err != nil {
+		t.Fatalf("create dependency: %v", err)
+	}
+
+	linkedParent, err := SetParent(SetParentOptions{
+		RepoPath: repo,
+		ItemID:   child.ID,
+		ParentID: epic.ID,
+	})
+	if err != nil {
+		t.Fatalf("set parent: %v", err)
+	}
+	if linkedParent.ParentID != epic.ID {
+		t.Fatalf("expected parent %s, got %q", epic.ID, linkedParent.ParentID)
+	}
+
+	linkedDependency, err := LinkDependency(LinkDependencyOptions{
+		RepoPath:    repo,
+		ItemID:      child.ID,
+		DependsOnID: dependency.ID,
+	})
+	if err != nil {
+		t.Fatalf("link dependency: %v", err)
+	}
+	if len(linkedDependency.DependsOn) != 1 || linkedDependency.DependsOn[0] != dependency.ID {
+		t.Fatalf("expected dependency on %s, got %#v", dependency.ID, linkedDependency.DependsOn)
+	}
+
+	if _, err := SetParent(SetParentOptions{
+		RepoPath: repo,
+		ItemID:   epic.ID,
+		ParentID: child.ID,
+	}); err == nil || !strings.Contains(err.Error(), "hierarchy cycle") {
+		t.Fatalf("expected hierarchy cycle error, got %v", err)
+	}
+
+	if _, err := LinkDependency(LinkDependencyOptions{
+		RepoPath:    repo,
+		ItemID:      dependency.ID,
+		DependsOnID: child.ID,
+	}); err == nil || !strings.Contains(err.Error(), "dependency cycle") {
+		t.Fatalf("expected dependency cycle error, got %v", err)
+	}
+
+	unlinkedDependency, err := UnlinkRelation(UnlinkRelationOptions{
+		RepoPath:    repo,
+		ItemID:      child.ID,
+		DependsOnID: dependency.ID,
+	})
+	if err != nil {
+		t.Fatalf("unlink dependency: %v", err)
+	}
+	if len(unlinkedDependency.DependsOn) != 0 {
+		t.Fatalf("expected dependency to be removed, got %#v", unlinkedDependency.DependsOn)
+	}
+
+	unlinkedParent, err := UnlinkRelation(UnlinkRelationOptions{
+		RepoPath:     repo,
+		ItemID:       child.ID,
+		RemoveParent: true,
+	})
+	if err != nil {
+		t.Fatalf("unlink parent: %v", err)
+	}
+	if unlinkedParent.ParentID != "" {
+		t.Fatalf("expected parent to be removed, got %q", unlinkedParent.ParentID)
+	}
+}
+
 func TestListChanges(t *testing.T) {
 	repo := t.TempDir()
 	if _, err := InitRepo(InitOptions{RepoPath: repo}); err != nil {
@@ -751,6 +856,109 @@ func TestReadyFiltersBlockedAndForeignLeasedItems(t *testing.T) {
 	}
 	if !foundReady {
 		t.Fatalf("expected ready item %s to appear", readyItem.ID)
+	}
+}
+
+func TestSearchItemsAndReport(t *testing.T) {
+	repo := t.TempDir()
+	if _, err := InitRepo(InitOptions{RepoPath: repo}); err != nil {
+		t.Fatalf("init repo: %v", err)
+	}
+
+	bug, err := CreateItem(CreateItemOptions{
+		RepoPath:      repo,
+		Kind:          domain.KindBug,
+		Title:         "Cache invalidation regression",
+		Goal:          "Restore correct invalidation after deletes",
+		NextAction:    "Reproduce the regression",
+		Acceptance:    []string{"delete path invalidates cache"},
+		RelevantFiles: []string{"internal/store/item.go"},
+		Priority:      1,
+	})
+	if err != nil {
+		t.Fatalf("create bug: %v", err)
+	}
+	if _, err := UpdateItem(UpdateItemOptions{
+		RepoPath: repo,
+		ItemID:   bug.ID,
+		Summary:  "cache regression reproduced in delete path",
+	}); err != nil {
+		t.Fatalf("update bug: %v", err)
+	}
+	blockedStatus := domain.StatusBlocked
+	if _, err := UpdateItem(UpdateItemOptions{
+		RepoPath: repo,
+		ItemID:   bug.ID,
+		Summary:  "waiting on schema choice",
+		Status:   &blockedStatus,
+	}); err != nil {
+		t.Fatalf("block bug via update: %v", err)
+	}
+
+	task, err := CreateItem(CreateItemOptions{
+		RepoPath:   repo,
+		Kind:       domain.KindTask,
+		Title:      "Ship report command",
+		Goal:       "Add compact local reporting",
+		NextAction: "Wire the CLI",
+		Priority:   2,
+	})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	if _, err := TakeItem(TakeItemOptions{
+		RepoPath: repo,
+		ItemID:   task.ID,
+		Agent:    "coder-1",
+		TTL:      time.Hour,
+	}); err != nil {
+		t.Fatalf("take task: %v", err)
+	}
+
+	searchResult, err := SearchItems(SearchItemsOptions{
+		RepoPath: repo,
+		Query:    "cache invalidation",
+		Limit:    10,
+	})
+	if err != nil {
+		t.Fatalf("search items: %v", err)
+	}
+	if len(searchResult.Items) != 1 || searchResult.Items[0].ID != bug.ID {
+		t.Fatalf("unexpected search results: %#v", searchResult.Items)
+	}
+
+	kind := domain.KindBug
+	status := domain.StatusBlocked
+	filteredResult, err := SearchItems(SearchItemsOptions{
+		RepoPath: repo,
+		Query:    "regression",
+		Status:   &status,
+		Kind:     &kind,
+		Limit:    10,
+	})
+	if err != nil {
+		t.Fatalf("filtered search items: %v", err)
+	}
+	if len(filteredResult.Items) != 1 || filteredResult.Items[0].ID != bug.ID {
+		t.Fatalf("unexpected filtered search results: %#v", filteredResult.Items)
+	}
+
+	report, err := BuildReport(ReportOptions{
+		RepoPath: repo,
+		Agent:    "coder-1",
+		Limit:    3,
+	})
+	if err != nil {
+		t.Fatalf("build report: %v", err)
+	}
+	if report.Total != 2 {
+		t.Fatalf("expected report total 2, got %d", report.Total)
+	}
+	if len(report.Owned) != 1 || report.Owned[0].Item.ID != task.ID {
+		t.Fatalf("unexpected owned section: %#v", report.Owned)
+	}
+	if len(report.Recent) == 0 {
+		t.Fatal("expected recent events in report")
 	}
 }
 

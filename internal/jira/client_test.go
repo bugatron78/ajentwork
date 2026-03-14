@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -173,6 +174,101 @@ func TestClientGetAndCreateIssue(t *testing.T) {
 
 	if err := client.AddComment(context.Background(), "ABC-456", "Ready for review"); err != nil {
 		t.Fatalf("add comment: %v", err)
+	}
+}
+
+func TestClientProjectOperations(t *testing.T) {
+	client := Client{
+		BaseURL:  "https://example.atlassian.net",
+		Email:    "agent@example.com",
+		APIToken: "secret",
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			wantAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte("agent@example.com:secret"))
+			if r.Header.Get("Authorization") != wantAuth {
+				return jsonResponse(http.StatusUnauthorized, "unauthorized"), nil
+			}
+
+			switch {
+			case r.Method == http.MethodGet && r.URL.Path == "/rest/api/3/project/SD":
+				return jsonResponse(http.StatusOK, `{"id":"10000","key":"SD","name":"Software Delivery","projectTypeKey":"software"}`), nil
+			case r.Method == http.MethodGet && r.URL.Path == "/rest/api/3/project/MISSING":
+				return jsonResponse(http.StatusNotFound, `{"errorMessages":["No project found"]}`), nil
+			case r.Method == http.MethodGet && r.URL.Path == "/rest/api/3/project/search":
+				if got := r.URL.Query().Get("query"); got != "delivery" {
+					t.Fatalf("unexpected project search query: %q", got)
+				}
+				if got := r.URL.Query().Get("maxResults"); got != "7" {
+					t.Fatalf("unexpected project search maxResults: %q", got)
+				}
+				return jsonResponse(http.StatusOK, `{"values":[{"id":"10000","key":"SD","name":"Software Delivery","projectTypeKey":"software"},{"id":"10001","key":"OPS","name":"Operations","projectTypeKey":"software"}]}`), nil
+			case r.Method == http.MethodGet && r.URL.Path == "/rest/api/3/myself":
+				return jsonResponse(http.StatusOK, `{"accountId":"abc-123","displayName":"Agent Example","emailAddress":"agent@example.com"}`), nil
+			case r.Method == http.MethodPost && r.URL.Path == "/rest/api/3/project":
+				var payload map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+					t.Fatalf("decode create project payload: %v", err)
+				}
+				if payload["key"] != "NEW" || payload["name"] != "New Space" {
+					t.Fatalf("unexpected create project payload: %#v", payload)
+				}
+				if payload["leadAccountId"] != "abc-123" {
+					t.Fatalf("unexpected leadAccountId payload: %#v", payload["leadAccountId"])
+				}
+				return jsonResponse(http.StatusCreated, `{"id":"10002","key":"NEW","name":"New Space","projectTypeKey":"software"}`), nil
+			default:
+				return jsonResponse(http.StatusNotFound, "not found"), nil
+			}
+		})},
+	}
+
+	project, err := client.GetProject(context.Background(), "SD")
+	if err != nil {
+		t.Fatalf("get project: %v", err)
+	}
+	if project.Key != "SD" || project.Name != "Software Delivery" {
+		t.Fatalf("unexpected project: %#v", project)
+	}
+
+	projects, err := client.SearchProjects(context.Background(), "delivery", 7)
+	if err != nil {
+		t.Fatalf("search projects: %v", err)
+	}
+	if len(projects) != 2 || projects[0].Key != "SD" || projects[1].Key != "OPS" {
+		t.Fatalf("unexpected project search results: %#v", projects)
+	}
+
+	user, err := client.GetMyself(context.Background())
+	if err != nil {
+		t.Fatalf("get myself: %v", err)
+	}
+	if user.AccountID != "abc-123" {
+		t.Fatalf("unexpected user: %#v", user)
+	}
+
+	created, err := client.CreateProject(context.Background(), CreateProjectInput{
+		Key:                "NEW",
+		Name:               "New Space",
+		ProjectTypeKey:     "software",
+		ProjectTemplateKey: "com.pyxis.greenhopper.jira:gh-simplified-agility-scrum",
+		LeadAccountID:      user.AccountID,
+	})
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	if created.Key != "NEW" || created.Name != "New Space" {
+		t.Fatalf("unexpected created project: %#v", created)
+	}
+
+	_, err = client.GetProject(context.Background(), "MISSING")
+	if err == nil {
+		t.Fatal("expected missing project error")
+	}
+	var apiErr *APIError
+	if !strings.Contains(err.Error(), "404") && !strings.Contains(err.Error(), "Not Found") {
+		t.Fatalf("expected API error details, got: %v", err)
+	}
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("expected APIError, got %T", err)
 	}
 }
 

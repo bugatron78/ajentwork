@@ -499,7 +499,7 @@ func TestRunnerNextAndInbox(t *testing.T) {
 	}
 }
 
-func TestRunnerLinkShowsDependency(t *testing.T) {
+func TestRunnerLinkUnlinkAndShowRelations(t *testing.T) {
 	repo := t.TempDir()
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
@@ -508,8 +508,14 @@ func TestRunnerLinkShowsDependency(t *testing.T) {
 	if code := runner.Run([]string{"--repo", repo, "init"}); code != 0 {
 		t.Fatalf("init exit code = %d, stderr = %s", code, stderr.String())
 	}
-	if code := runner.Run([]string{"--repo", repo, "new", "--kind", "task", "--title", "Parent", "--goal", "Build parent", "--next", "Finish parent"}); code != 0 {
-		t.Fatalf("new parent exit code = %d, stderr = %s", code, stderr.String())
+	if code := runner.Run([]string{"--repo", repo, "new", "--kind", "epic", "--title", "Epic", "--goal", "Group related work", "--next", "Break work down"}); code != 0 {
+		t.Fatalf("new epic exit code = %d, stderr = %s", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "new", "--kind", "task", "--title", "Dependency", "--goal", "Enable downstream work", "--next", "Ship dependency"}); code != 0 {
+		t.Fatalf("new dependency exit code = %d, stderr = %s", code, stderr.String())
 	}
 
 	stdout.Reset()
@@ -528,27 +534,38 @@ func TestRunnerLinkShowsDependency(t *testing.T) {
 		t.Fatalf("unmarshal list json: %v", err)
 	}
 
-	var parentID, childID string
+	var epicID, dependencyID, childID string
 	for _, item := range items {
 		title, _ := item["title"].(string)
 		id, _ := item["id"].(string)
 		switch title {
-		case "Parent":
-			parentID = id
+		case "Epic":
+			epicID = id
+		case "Dependency":
+			dependencyID = id
 		case "Child":
 			childID = id
 		}
 	}
-	if parentID == "" || childID == "" {
-		t.Fatalf("expected both parent and child ids, got parent=%q child=%q", parentID, childID)
+	if epicID == "" || dependencyID == "" || childID == "" {
+		t.Fatalf("expected all item ids, got epic=%q dependency=%q child=%q", epicID, dependencyID, childID)
 	}
 
 	stdout.Reset()
 	stderr.Reset()
-	if code := runner.Run([]string{"--repo", repo, "link", childID, "--depends-on", parentID}); code != 0 {
+	if code := runner.Run([]string{"--repo", repo, "link", childID, "--parent", epicID}); code != 0 {
+		t.Fatalf("link parent exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "linked "+childID+" parent "+epicID) {
+		t.Fatalf("unexpected parent link output: %s", stdout.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "link", childID, "--depends-on", dependencyID}); code != 0 {
 		t.Fatalf("link exit code = %d, stderr = %s", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "linked "+childID+" depends_on "+parentID) {
+	if !strings.Contains(stdout.String(), "linked "+childID+" depends_on "+dependencyID) {
 		t.Fatalf("unexpected link output: %s", stdout.String())
 	}
 
@@ -557,8 +574,44 @@ func TestRunnerLinkShowsDependency(t *testing.T) {
 	if code := runner.Run([]string{"--repo", repo, "show", childID}); code != 0 {
 		t.Fatalf("show exit code = %d, stderr = %s", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "Depends On: "+parentID) {
-		t.Fatalf("expected show output to include dependency, got %s", stdout.String())
+	if !strings.Contains(stdout.String(), "Parent: "+epicID) || !strings.Contains(stdout.String(), "Depends On: "+dependencyID) {
+		t.Fatalf("expected show output to include parent and dependency, got %s", stdout.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "show", epicID}); code != 0 {
+		t.Fatalf("show parent exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Children: "+childID) {
+		t.Fatalf("expected parent show output to include children, got %s", stdout.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "show", dependencyID}); code != 0 {
+		t.Fatalf("show dependency exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Blocks: "+childID) {
+		t.Fatalf("expected dependency show output to include blocks, got %s", stdout.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "unlink", childID, "--depends-on", dependencyID}); code != 0 {
+		t.Fatalf("unlink dependency exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "unlinked "+childID+" depends_on "+dependencyID) {
+		t.Fatalf("unexpected unlink dependency output: %s", stdout.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "unlink", childID, "--parent"}); code != 0 {
+		t.Fatalf("unlink parent exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "unlinked "+childID+" parent") {
+		t.Fatalf("unexpected unlink parent output: %s", stdout.String())
 	}
 }
 
@@ -599,6 +652,79 @@ func TestRunnerChanges(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), itemID) || !strings.Contains(stdout.String(), "updated") {
 		t.Fatalf("unexpected changes output: %s", stdout.String())
+	}
+}
+
+func TestRunnerSearchAndReport(t *testing.T) {
+	repo := t.TempDir()
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	runner := NewRunner(stdout, stderr)
+
+	if code := runner.Run([]string{"--repo", repo, "init"}); code != 0 {
+		t.Fatalf("init exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if code := runner.Run([]string{"--repo", repo, "new", "--kind", "bug", "--title", "Cache invalidation regression", "--goal", "Fix delete-path invalidation", "--next", "Reproduce the issue", "--accept", "delete invalidates stale cache"}); code != 0 {
+		t.Fatalf("new bug exit code = %d, stderr = %s", code, stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "new", "--kind", "task", "--title", "Implement reporting", "--goal", "Add repo summaries", "--next", "Wire the report command"}); code != 0 {
+		t.Fatalf("new task exit code = %d, stderr = %s", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "ls", "--format", "json"}); code != 0 {
+		t.Fatalf("ls json exit code = %d, stderr = %s", code, stderr.String())
+	}
+	var items []map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &items); err != nil {
+		t.Fatalf("unmarshal list json: %v", err)
+	}
+	var bugID, taskID string
+	for _, item := range items {
+		title, _ := item["title"].(string)
+		id, _ := item["id"].(string)
+		switch title {
+		case "Cache invalidation regression":
+			bugID = id
+		case "Implement reporting":
+			taskID = id
+		}
+	}
+	if bugID == "" || taskID == "" {
+		t.Fatalf("expected both ids, got bug=%q task=%q", bugID, taskID)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "update", bugID, "--summary", "regression reproduced in cache delete flow", "--status", "blocked", "--next", "wait for a schema decision"}); code != 0 {
+		t.Fatalf("update bug exit code = %d, stderr = %s", code, stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "take", taskID, "--agent", "coder-1"}); code != 0 {
+		t.Fatalf("take task exit code = %d, stderr = %s", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "search", "cache", "--status", "blocked", "--kind", "bug"}); code != 0 {
+		t.Fatalf("search exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Matches: 1") || !strings.Contains(stdout.String(), bugID) {
+		t.Fatalf("unexpected search output: %s", stdout.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "report", "--agent", "coder-1", "--limit", "3"}); code != 0 {
+		t.Fatalf("report exit code = %d, stderr = %s", code, stderr.String())
+	}
+	output := stdout.String()
+	if !strings.Contains(output, "Total Items: 2") || !strings.Contains(output, "Owned:") || !strings.Contains(output, taskID) || !strings.Contains(output, "Recent:") {
+		t.Fatalf("unexpected report output: %s", output)
 	}
 }
 
@@ -1033,6 +1159,106 @@ func TestRunnerJiraSearch(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "Matches: 1") || !strings.Contains(stdout.String(), "ABC-321") {
 		t.Fatalf("unexpected jira search output: %s", stdout.String())
+	}
+}
+
+func TestRunnerInitWithJiraSpaceAndSpaceCommands(t *testing.T) {
+	repo := t.TempDir()
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	runner := NewRunner(stdout, stderr)
+
+	oldClient := jira.DefaultHTTPClient
+	defer func() { jira.DefaultHTTPClient = oldClient }()
+
+	spaceExists := false
+	jira.DefaultHTTPClient = &http.Client{Transport: runnerRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+		wantAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte("agent@example.com:secret"))
+		if r.Header.Get("Authorization") != wantAuth {
+			return runnerJSONResponse(http.StatusUnauthorized, "unauthorized"), nil
+		}
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/api/3/project/SD":
+			if !spaceExists {
+				return runnerJSONResponse(http.StatusNotFound, `{"errorMessages":["No project found"]}`), nil
+			}
+			return runnerJSONResponse(http.StatusOK, `{"id":"10000","key":"SD","name":"Software Delivery","projectTypeKey":"software"}`), nil
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/api/3/myself":
+			return runnerJSONResponse(http.StatusOK, `{"accountId":"abc-123","displayName":"Agent Example","emailAddress":"agent@example.com"}`), nil
+		case r.Method == http.MethodPost && r.URL.Path == "/rest/api/3/project":
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode create project payload: %v", err)
+			}
+			if payload["key"] != "SD" || payload["name"] != "Software Delivery" {
+				t.Fatalf("unexpected create project payload: %#v", payload)
+			}
+			spaceExists = true
+			return runnerJSONResponse(http.StatusCreated, `{"id":"10000","key":"SD","name":"Software Delivery","projectTypeKey":"software"}`), nil
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/api/3/project/search":
+			if got := r.URL.Query().Get("query"); got != "delivery" {
+				t.Fatalf("unexpected project search query: %q", got)
+			}
+			if got := r.URL.Query().Get("maxResults"); got != "5" {
+				t.Fatalf("unexpected project search maxResults: %q", got)
+			}
+			return runnerJSONResponse(http.StatusOK, `{"values":[{"id":"10000","key":"SD","name":"Software Delivery","projectTypeKey":"software"}]}`), nil
+		default:
+			return runnerJSONResponse(http.StatusNotFound, "not found"), nil
+		}
+	})}
+
+	t.Setenv("AJ_JIRA_EMAIL", "agent@example.com")
+	t.Setenv("AJ_JIRA_API_TOKEN", "secret")
+
+	if code := runner.Run([]string{
+		"--repo", repo, "init",
+		"--jira",
+		"--jira-base-url", "https://example.atlassian.net",
+		"--jira-space-key", "SD",
+		"--jira-space-name", "Software Delivery",
+		"--ensure-jira-space",
+	}); code != 0 {
+		t.Fatalf("init with jira space exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "jira space: SD") || !strings.Contains(stdout.String(), "jira space created") {
+		t.Fatalf("unexpected init output: %s", stdout.String())
+	}
+
+	configBytes, err := os.ReadFile(filepath.Join(repo, ".aj", "config.toml"))
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	configRaw := string(configBytes)
+	if !strings.Contains(configRaw, `enabled = true`) || !strings.Contains(configRaw, `base_url = "https://example.atlassian.net"`) || !strings.Contains(configRaw, `project = "SD"`) {
+		t.Fatalf("unexpected config contents: %s", configRaw)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "jira", "space", "exists", "--key", "SD"}); code != 0 {
+		t.Fatalf("jira space exists exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Exists: true") || !strings.Contains(stdout.String(), "Name: Software Delivery") {
+		t.Fatalf("unexpected jira space exists output: %s", stdout.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "jira", "space", "ensure", "--key", "SD", "--name", "Software Delivery"}); code != 0 {
+		t.Fatalf("jira space ensure exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "using existing Jira space SD (Software Delivery)") {
+		t.Fatalf("unexpected jira space ensure output: %s", stdout.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"--repo", repo, "jira", "space", "ls", "--query", "delivery", "--limit", "5"}); code != 0 {
+		t.Fatalf("jira space ls exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Matches: 1") || !strings.Contains(stdout.String(), "SD") {
+		t.Fatalf("unexpected jira space ls output: %s", stdout.String())
 	}
 }
 

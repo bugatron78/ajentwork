@@ -127,8 +127,8 @@ Show a compact queue of owned, stale, waiting, and available work items so an ag
 optional agent name; if provided, owned items for that agent are highlighted
 .RE
 .SS INIT
-.B aj init [\-\-repo <path>] [\-\-force]
-Bootstrap a repository for aj by creating the .aj directory tree, default config, cache directory, and artifact directories.
+.B aj init [\-\-repo <path>] [\-\-force] [\-\-jira \-\-jira\-base\-url <url> \-\-jira\-space\-key <key> [\-\-jira\-space\-name <name>] [\-\-jira\-space\-type <type>] [\-\-jira\-space\-template <template>] [\-\-ensure\-jira\-space]]
+Bootstrap a repository for aj by creating the .aj directory tree, default config, cache directory, and artifact directories. When Jira is part of the workflow, init can also record the Jira site and space key, and optionally ensure that the Jira space exists before work starts.
 .RS
 .TP
 .B \-\-repo <path>
@@ -137,16 +137,40 @@ initialize aj in a specific repository path instead of the current working direc
 .B \-\-force
 overwrite an existing config file if present
 .TP
+.B \-\-jira
+enable Jira support in the new .aj/config.toml
+.TP
+.B \-\-jira\-base\-url <url>
+set the Jira Cloud base URL such as https://example.atlassian.net
+.TP
+.B \-\-jira\-space\-key <key>
+set the Jira space/project key to reuse or create
+.TP
+.B \-\-jira\-space\-name <name>
+human\-readable Jira space/project name to use when creating a missing space
+.TP
+.B \-\-jira\-space\-type <type>
+optional Jira project type such as software; default software when ensuring a space
+.TP
+.B \-\-jira\-space\-template <template>
+optional Jira project template key; required for some non\-software project types
+.TP
+.B \-\-ensure\-jira\-space
+check whether the Jira space key exists and create it if missing
+.TP
 .B \-\-format brief|json|prompt
 render the result in the requested output format
 .RE
 .SS LINK
-.B aj link <id> \-\-depends\-on <id>
-Record a dependency edge so aj can understand that an item is waiting for another item to be completed before it is ready.
+.B aj link <id> (\-\-depends\-on <id> | \-\-parent <id>)
+Record either a dependency edge or a parent\-child hierarchy edge so aj can understand readiness and work decomposition.
 .RS
 .TP
 .B \-\-depends\-on <id>
-required dependency item identifier
+record that the item cannot start until the dependency is done
+.TP
+.B \-\-parent <id>
+record that the item is a child of the given parent or epic item
 .RE
 .SS LS
 .B aj ls
@@ -239,9 +263,34 @@ required next action after reopening
 .B \-\-status <status>
 optional replacement status after reopening; default todo
 .RE
+.SS REPORT
+.B aj report [\-\-agent <name>] [\-\-limit <n>]
+Summarize the current local backlog with status counts plus the most relevant owned, ready, waiting, and recent work so an agent can orient quickly.
+.RS
+.TP
+.B \-\-agent <name>
+optional agent name; if provided, owned and ready sections are tailored to that agent
+.TP
+.B \-\-limit <n>
+optional max entries per report section; default 5
+.RE
+.SS SEARCH
+.B aj search [terms...] [\-\-status <status>] [\-\-kind <kind>] [\-\-limit <n>]
+Search local aj work items across titles, summaries, goals, next actions, structured context, relations, and Jira linkage so an agent can quickly find relevant existing work before creating or updating anything.
+.RS
+.TP
+.B \-\-status <status>
+optional status filter: todo, in_progress, blocked, in_review, done, or canceled
+.TP
+.B \-\-kind <kind>
+optional kind filter: bug, feature, task, spike, or epic
+.TP
+.B \-\-limit <n>
+optional max number of matches to return; default 20
+.RE
 .SS SHOW
 .B aj show <id> [\-\-history] [\-\-limit <n>]
-Show the compact current snapshot for a single local work item, with optional recent event history.
+Show the compact current snapshot for a single local work item, including local graph context such as parent, children, dependencies, and blocked downstream work, with optional recent event history.
 .RS
 .TP
 .B \-\-history
@@ -278,6 +327,17 @@ optional replacement next action
 .B \-\-status <status>
 optional replacement status after unblocking; default todo
 .RE
+.SS UNLINK
+.B aj unlink <id> (\-\-depends\-on <id> | \-\-parent)
+Remove one dependency edge or clear a parent link when the work graph changes and agents need the current structure to stay accurate.
+.RS
+.TP
+.B \-\-depends\-on <id>
+remove one dependency edge from the item
+.TP
+.B \-\-parent
+clear the current parent link from the item
+.RE
 .SS UPDATE
 .B aj update <id> \-\-summary <summary> [\-\-next <action>] [\-\-status <status>]
 Update a local work item summary and optionally change its next action or active status. Good updates explain what changed, what was learned, and what remains uncertain.
@@ -311,8 +371,8 @@ Render top\-level help, per\-command help, or topic help for workflows, examples
 .B aj workflows [topic] [\-\-format brief|json|prompt]
 Describe common aj sequences such as initializing a repo, claiming Jira work, or handling blockers.
 .SS JIRA
-.B aj jira <search|pull|push|link|unlink|status\-map|transitions|sync|comment> ...
-Use the Jira adapter to search for likely existing issues, pull Jira issues into local aj items, push local items to Jira, link or unlink local items, inspect status mappings and transitions, sync linked items with conflict detection, and send compact milestone comments back to Jira.
+.B aj jira <search|pull|push|space|link|unlink|status\-map|transitions|sync|comment> ...
+Use the Jira adapter to search for likely existing issues, pull Jira issues into local aj items, push local items to Jira, manage Jira spaces, link or unlink local items, inspect status mappings and transitions, sync linked items with conflict detection, and send compact milestone comments back to Jira.
 .RS
 .TP
 .B search <terms...> [\-\-limit <n>] [\-\-project <key>]
@@ -323,6 +383,18 @@ import a Jira issue into aj unless it is already linked
 .TP
 .B push <id>
 create a Jira issue from a local aj item unless it is already linked
+.TP
+.B space exists [\-\-key <key>]
+check whether a Jira space/project key already exists; defaults to the configured Jira project key when available
+.TP
+.B space create \-\-key <key> \-\-name <name> [\-\-type <type>] [\-\-template <template>]
+create a new Jira space/project explicitly
+.TP
+.B space ensure \-\-key <key> \-\-name <name> [\-\-type <type>] [\-\-template <template>]
+return the existing Jira space/project for a key or create it if missing
+.TP
+.B space ls [\-\-query <text>] [\-\-limit <n>]
+list visible Jira spaces/projects, optionally filtered by a search query
 .TP
 .B link <id> <key> [\-\-replace]
 attach an existing local item to an existing Jira issue; require \-\-replace to swap an existing link
@@ -392,19 +464,27 @@ create and bootstrap a local aj repository
 .IP \[bu] 2
 1. Run `aj init` in the repository root.
 .IP \[bu] 2
-2. Run `aj new \-\-kind task \-\-title "..." \-\-goal "..." \-\-next "..."` to create the first item.
+2. If Jira will be used, decide whether the Jira space key already exists or whether aj should create it during bootstrap.
 .IP \[bu] 2
-3. Use `aj ls` to inspect the local queue.
+3. Use `aj init \-\-jira \-\-jira\-base\-url https://example.atlassian.net \-\-jira\-space\-key SD` to reuse an existing Jira space, or add `\-\-jira\-space\-name "Software Delivery" \-\-ensure\-jira\-space` to create it when missing.
 .IP \[bu] 2
-4. Use `aj show <id>` before updating or handing work off.
+4. Run `aj new \-\-kind task \-\-title "..." \-\-goal "..." \-\-next "..."` to create the first item.
+.IP \[bu] 2
+5. Use `aj ls` to inspect the local queue.
+.IP \[bu] 2
+6. Use `aj show <id>` before updating or handing work off.
 .SS DEPENDENCIES
-declare dependency edges so waiting work is not recommended too early
+declare dependency and hierarchy edges so waiting work is not recommended too early and child work stays grouped
 .IP \[bu] 2
 1. Use `aj link <id> \-\-depends\-on <dependency>` when work cannot start until another item is done.
 .IP \[bu] 2
-2. Use `aj show <id>` to confirm the dependency is recorded.
+2. Use `aj link <id> \-\-parent <parent>` when the item should roll up under a larger task or epic.
 .IP \[bu] 2
-3. Use `aj inbox \-\-agent coder\-1` or `aj next \-\-agent coder\-1` and let aj mark dependent work as waiting.
+3. Use `aj show <id>` to confirm parent, children, dependencies, and blocked downstream work are recorded the way you expect.
+.IP \[bu] 2
+4. Use `aj unlink ...` when plans change so the graph stays accurate.
+.IP \[bu] 2
+5. Use `aj inbox \-\-agent coder\-1` or `aj next \-\-agent coder\-1` and let aj mark dependent work as waiting.
 .SS EVIDENCE
 attach proof so another agent can verify what was tried and what happened
 .IP \[bu] 2
@@ -434,21 +514,25 @@ inspect recent activity without scanning every item
 .IP \[bu] 2
 3. Use `aj show <id>` after reading changes if you need the current snapshot too.
 .SS JIRA
-search, import, and claim human\-created Jira work
+bootstrap Jira\-aware repos and search, import, or claim human\-created Jira work
 .IP \[bu] 2
-1. Set `AJ_JIRA_EMAIL` and `AJ_JIRA_API_TOKEN`, and enable Jira in `.aj/config.toml`.
+1. Set `AJ_JIRA_EMAIL` and `AJ_JIRA_API_TOKEN` for the Jira site you want aj to use.
 .IP \[bu] 2
-2. Run `aj jira search ...` to look for likely existing Jira work before creating or linking anything new.
+2. Decide whether the Jira space key already exists. Use `aj jira space exists \-\-key SD` or `aj jira space ls \-\-query delivery` to inspect what's already there.
 .IP \[bu] 2
-3. Run `aj take jira ABC\-123 \-\-agent coder\-1` to import and claim human\-created work.
+3. Bootstrap the repo with `aj init \-\-jira \-\-jira\-base\-url https://example.atlassian.net \-\-jira\-space\-key SD`, or add `\-\-jira\-space\-name "Software Delivery" \-\-ensure\-jira\-space` when the space should be created if missing.
 .IP \[bu] 2
-4. Use `aj show <id>` to inspect the normalized local item.
+4. Run `aj jira search ...` to look for likely existing Jira work before creating or linking anything new.
 .IP \[bu] 2
-5. Use `aj jira status\-map` and `aj jira transitions <id>` to inspect the workflow before syncing.
+5. Run `aj take jira ABC\-123 \-\-agent coder\-1` to import and claim human\-created work.
 .IP \[bu] 2
-6. Use `aj update <id> \-\-summary ... \-\-next ...` to record progress, `aj jira comment <id> \-\-summary "ready for review"` for milestone updates, or `aj jira sync <id> \-\-dry\-run` to preview sync direction and status transitions.
+6. Use `aj show <id>` to inspect the normalized local item.
 .IP \[bu] 2
-7. Use `aj jira unlink <id>` before relinking to a different Jira issue, or `aj jira link <id> <key> \-\-replace` when that swap is intentional.
+7. Use `aj jira status\-map` and `aj jira transitions <id>` to inspect the workflow before syncing.
+.IP \[bu] 2
+8. Use `aj update <id> \-\-summary ... \-\-next ...` to record progress, `aj jira comment <id> \-\-summary "ready for review"` for milestone updates, or `aj jira sync <id> \-\-dry\-run` to preview sync direction and status transitions.
+.IP \[bu] 2
+9. Use `aj jira unlink <id>` before relinking to a different Jira issue, or `aj jira link <id> <key> \-\-replace` when that swap is intentional.
 .SS PROGRESS
 record progress while keeping next steps explicit
 .IP \[bu] 2
@@ -473,6 +557,16 @@ see only work that can actually start right now
 2. Use `aj ready \-\-agent coder\-1` to include and prioritize work you already own.
 .IP \[bu] 2
 3. Use `aj take <id> \-\-agent coder\-1` to claim a ready item if it is still available.
+.SS REPORTING
+query the local backlog without manually scanning every item
+.IP \[bu] 2
+1. Use `aj search ...` to find related existing work before creating a new ticket or updating an old one.
+.IP \[bu] 2
+2. Add `\-\-status` or `\-\-kind` filters when you want a tighter slice like blocked bugs or in\-progress features.
+.IP \[bu] 2
+3. Use `aj report` to get a compact repo summary with status counts plus owned, ready, waiting, and recent sections.
+.IP \[bu] 2
+4. Use `aj report \-\-agent coder\-1` when an individual agent needs a fast orientation pass before taking new work.
 .SH EXAMPLES
 .SS AUTHORING
 .IP \[bu] 2
@@ -502,6 +596,10 @@ Hand off work: aj handoff W\-8F3K2P1Q \-\-to reviewer\-1 \-\-summary "implementa
 .IP \[bu] 2
 Record a dependency: aj link W\-CHILD \-\-depends\-on W\-PARENT
 .IP \[bu] 2
+Attach a child to an epic: aj link W\-CHILD \-\-parent W\-EPIC
+.IP \[bu] 2
+Remove an outdated dependency: aj unlink W\-CHILD \-\-depends\-on W\-PARENT
+.IP \[bu] 2
 Inspect waiting work: aj inbox \-\-agent coder\-1
 .SS EVIDENCE
 .IP \[bu] 2
@@ -520,7 +618,19 @@ Show item changes: aj changes \-\-item W\-8F3K2P1Q
 Initialize current repository: aj init
 .IP \[bu] 2
 Initialize a repo from another working directory: aj \-\-repo /workspace/project init
+.IP \[bu] 2
+Reuse an existing Jira space during init: aj init \-\-jira \-\-jira\-base\-url https://example.atlassian.net \-\-jira\-space\-key SD
+.IP \[bu] 2
+Create the Jira space during init if needed: aj init \-\-jira \-\-jira\-base\-url https://example.atlassian.net \-\-jira\-space\-key SD \-\-jira\-space\-name "Software Delivery" \-\-ensure\-jira\-space
 .SS JIRA
+.IP \[bu] 2
+Check whether a Jira space exists: aj jira space exists \-\-key SD
+.IP \[bu] 2
+List visible Jira spaces: aj jira space ls \-\-query delivery
+.IP \[bu] 2
+Create a Jira space: aj jira space create \-\-key SD \-\-name "Software Delivery"
+.IP \[bu] 2
+Ensure a Jira space exists: aj jira space ensure \-\-key SD \-\-name "Software Delivery"
 .IP \[bu] 2
 Search Jira for existing work: aj jira search cache invalidation
 .IP \[bu] 2
@@ -563,6 +673,15 @@ Show the current inbox: aj inbox \-\-agent coder\-1
 Show ready work: aj ready
 .IP \[bu] 2
 Show ready work for an agent: aj ready \-\-agent coder\-1
+.SS REPORTING
+.IP \[bu] 2
+Search local work: aj search cache invalidation
+.IP \[bu] 2
+Find blocked bugs: aj search regression \-\-status blocked \-\-kind bug
+.IP \[bu] 2
+Summarize the repo: aj report
+.IP \[bu] 2
+Summarize one agent's queue: aj report \-\-agent coder\-1 \-\-limit 3
 .SH CONFIGURATION
 aj stores repo\-local configuration in .aj/config.toml. Common Jira settings include [jira], [jira.status_map], and [jira.lifecycle].
 .nf

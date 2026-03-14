@@ -4,9 +4,28 @@ import "ajentwork/internal/store"
 
 type InitService struct{}
 
-func (s InitService) Run(repoPath string, force bool) (store.InitResult, error) {
+type InitInput struct {
+	RepoPath          string
+	Force             bool
+	JiraEnabled       bool
+	JiraBaseURL       string
+	JiraProject       string
+	EnsureJiraSpace   bool
+	JiraSpaceName     string
+	JiraSpaceType     string
+	JiraSpaceTemplate string
+}
+
+func (s InitService) Run(input InitInput) (store.InitResult, error) {
 	return store.InitRepo(store.InitOptions{
-		RepoPath: repoPath,
-		Force:    force,
+		RepoPath:          input.RepoPath,
+		Force:             input.Force,
+		JiraEnabled:       input.JiraEnabled,
+		JiraBaseURL:       input.JiraBaseURL,
+		JiraProject:       input.JiraProject,
+		EnsureJiraSpace:   input.EnsureJiraSpace,
+		JiraSpaceName:     input.JiraSpaceName,
+		JiraSpaceType:     input.JiraSpaceType,
+		JiraSpaceTemplate: input.JiraSpaceTemplate,
 	})
 }

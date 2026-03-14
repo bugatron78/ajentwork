@@ -32,6 +32,14 @@ type Issue struct {
 	Updated     string
 }
 
+type Project struct {
+	ID             string
+	Key            string
+	Name           string
+	URL            string
+	ProjectTypeKey string
+}
+
 type CreateIssueInput struct {
 	ProjectKey  string
 	IssueType   string
@@ -48,6 +56,32 @@ type Transition struct {
 	ID   string
 	Name string
 	To   string
+}
+
+type CreateProjectInput struct {
+	Key                string
+	Name               string
+	ProjectTypeKey     string
+	ProjectTemplateKey string
+	LeadAccountID      string
+}
+
+type User struct {
+	AccountID   string
+	DisplayName string
+	Email       string
+}
+
+type APIError struct {
+	Method     string
+	Path       string
+	StatusCode int
+	Status     string
+	Body       string
+}
+
+func (e *APIError) Error() string {
+	return fmt.Sprintf("jira API %s %s failed: %s: %s", e.Method, e.Path, e.Status, strings.TrimSpace(e.Body))
 }
 
 func (c Client) SearchIssues(ctx context.Context, jql string, limit int) ([]Issue, error) {
@@ -146,6 +180,102 @@ func (c Client) GetIssue(ctx context.Context, issueKey string) (Issue, error) {
 		Priority:    strings.TrimSpace(priority),
 		Status:      strings.TrimSpace(payload.Fields.Status.Name),
 		Updated:     strings.TrimSpace(payload.Fields.Updated),
+	}, nil
+}
+
+func (c Client) GetProject(ctx context.Context, projectKey string) (Project, error) {
+	path := fmt.Sprintf("/rest/api/3/project/%s", url.PathEscape(strings.TrimSpace(projectKey)))
+	var payload struct {
+		ID             string `json:"id"`
+		Key            string `json:"key"`
+		Name           string `json:"name"`
+		ProjectTypeKey string `json:"projectTypeKey"`
+	}
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, &payload); err != nil {
+		return Project{}, err
+	}
+	return Project{
+		ID:             strings.TrimSpace(payload.ID),
+		Key:            strings.TrimSpace(payload.Key),
+		Name:           strings.TrimSpace(payload.Name),
+		URL:            strings.TrimRight(c.BaseURL, "/") + "/jira/software/projects/" + strings.TrimSpace(payload.Key),
+		ProjectTypeKey: strings.TrimSpace(payload.ProjectTypeKey),
+	}, nil
+}
+
+func (c Client) SearchProjects(ctx context.Context, query string, limit int) ([]Project, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	path := fmt.Sprintf("/rest/api/3/project/search?maxResults=%d", limit)
+	if strings.TrimSpace(query) != "" {
+		path += "&query=" + url.QueryEscape(strings.TrimSpace(query))
+	}
+	var payload struct {
+		Values []struct {
+			ID             string `json:"id"`
+			Key            string `json:"key"`
+			Name           string `json:"name"`
+			ProjectTypeKey string `json:"projectTypeKey"`
+		} `json:"values"`
+	}
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, &payload); err != nil {
+		return nil, err
+	}
+	projects := make([]Project, 0, len(payload.Values))
+	for _, value := range payload.Values {
+		projects = append(projects, Project{
+			ID:             strings.TrimSpace(value.ID),
+			Key:            strings.TrimSpace(value.Key),
+			Name:           strings.TrimSpace(value.Name),
+			URL:            strings.TrimRight(c.BaseURL, "/") + "/jira/software/projects/" + strings.TrimSpace(value.Key),
+			ProjectTypeKey: strings.TrimSpace(value.ProjectTypeKey),
+		})
+	}
+	return projects, nil
+}
+
+func (c Client) GetMyself(ctx context.Context) (User, error) {
+	var payload struct {
+		AccountID   string `json:"accountId"`
+		DisplayName string `json:"displayName"`
+		Email       string `json:"emailAddress"`
+	}
+	if err := c.doJSON(ctx, http.MethodGet, "/rest/api/3/myself", nil, &payload); err != nil {
+		return User{}, err
+	}
+	return User{
+		AccountID:   strings.TrimSpace(payload.AccountID),
+		DisplayName: strings.TrimSpace(payload.DisplayName),
+		Email:       strings.TrimSpace(payload.Email),
+	}, nil
+}
+
+func (c Client) CreateProject(ctx context.Context, input CreateProjectInput) (Project, error) {
+	body := map[string]any{
+		"key":                strings.TrimSpace(input.Key),
+		"name":               strings.TrimSpace(input.Name),
+		"projectTypeKey":     strings.TrimSpace(input.ProjectTypeKey),
+		"projectTemplateKey": strings.TrimSpace(input.ProjectTemplateKey),
+		"leadAccountId":      strings.TrimSpace(input.LeadAccountID),
+		"assigneeType":       "PROJECT_LEAD",
+	}
+	var payload struct {
+		ID             string `json:"id"`
+		Key            string `json:"key"`
+		Name           string `json:"name"`
+		ProjectTypeKey string `json:"projectTypeKey"`
+		Self           string `json:"self"`
+	}
+	if err := c.doJSON(ctx, http.MethodPost, "/rest/api/3/project", body, &payload); err != nil {
+		return Project{}, err
+	}
+	return Project{
+		ID:             strings.TrimSpace(payload.ID),
+		Key:            strings.TrimSpace(payload.Key),
+		Name:           strings.TrimSpace(payload.Name),
+		URL:            strings.TrimRight(c.BaseURL, "/") + "/jira/software/projects/" + strings.TrimSpace(payload.Key),
+		ProjectTypeKey: strings.TrimSpace(payload.ProjectTypeKey),
 	}, nil
 }
 
@@ -277,7 +407,13 @@ func (c Client) doJSON(ctx context.Context, method, path string, body any, out a
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("jira API %s %s failed: %s: %s", method, path, resp.Status, strings.TrimSpace(string(bodyBytes)))
+		return &APIError{
+			Method:     method,
+			Path:       path,
+			StatusCode: resp.StatusCode,
+			Status:     resp.Status,
+			Body:       string(bodyBytes),
+		}
 	}
 
 	if out == nil {

@@ -37,6 +37,24 @@ Use checkpoints when another agent may need to resume work later, even if you ar
 - `aj show <id>` surfaces the latest checkpoint summary, remaining risks, and verification guidance.
 - `aj handoff ...` still transfers ownership; checkpoints make the handoff payload better before that transfer happens.
 
+## Dependencies And Hierarchy
+
+`aj` can now track both readiness constraints and simple work decomposition:
+
+- `aj link <id> --depends-on <id>` records that work cannot start until another item is done.
+- `aj link <id> --parent <id>` groups a child item under a larger parent or epic.
+- `aj unlink <id> --depends-on <id>` or `aj unlink <id> --parent` removes stale graph edges when plans change.
+- `aj show <id>` surfaces `Parent`, `Children`, `Depends On`, and `Blocks` so another agent can immediately see where the item sits in the local work graph.
+
+## Search And Reporting
+
+Use the local query/reporting layer before creating new work or when an agent needs fast orientation:
+
+- `aj search cache invalidation` searches local items across titles, summaries, goals, next actions, structured context, relations, and Jira linkage.
+- `aj search regression --status blocked --kind bug` narrows the result set to a tighter operational slice.
+- `aj report` shows status counts plus compact `Owned`, `Ready`, `Waiting`, and `Recent` sections.
+- `aj report --agent coder-1 --limit 3` gives an agent-specific orientation pass with a tighter section size.
+
 ## Build
 
 ```bash
@@ -53,6 +71,36 @@ Generate the man page:
 
 ```bash
 go run ./cmd/ajgenman --output docs/aj.1
+```
+
+## Bootstrap A Repo
+
+Initialize the current repository:
+
+```bash
+aj init
+```
+
+If Jira is part of the workflow, decide at init time whether the Jira space key already exists or whether `aj` should create it if missing.
+
+Reuse an existing Jira space:
+
+```bash
+aj init \
+  --jira \
+  --jira-base-url https://example.atlassian.net \
+  --jira-space-key SD
+```
+
+Create the Jira space if the key does not exist yet:
+
+```bash
+aj init \
+  --jira \
+  --jira-base-url https://example.atlassian.net \
+  --jira-space-key SD \
+  --jira-space-name "Software Delivery" \
+  --ensure-jira-space
 ```
 
 ## Quick Install
@@ -107,6 +155,10 @@ It also installs the `aj(1)` man page, so `man aj` works after a Homebrew instal
 
 The first Jira adapter slice supports:
 
+- `aj jira space exists [--key <key>]`
+- `aj jira space create --key <key> --name <name> [--type <type>] [--template <template>]`
+- `aj jira space ensure --key <key> --name <name> [--type <type>] [--template <template>]`
+- `aj jira space ls [--query <text>] [--limit <n>]`
 - `aj jira search <terms...> [--limit <n>] [--project <key>]`
 - `aj jira pull <key>`
 - `aj jira push <id> [--project <key>] [--type <name>]`
@@ -119,6 +171,7 @@ The first Jira adapter slice supports:
 - `aj take jira <key> --agent <name>`
 
 Use `aj jira search ...` before creating or linking new work so agents can check whether a matching Jira issue already exists.
+Use `aj jira space exists ...` or `aj jira space ls ...` to inspect available Jira spaces, and `aj jira space ensure ...` when the repo should be able to create the configured space key if it does not exist yet.
 `aj jira sync` will also try to move the remote Jira issue to the mapped Jira status when the local `aj` item status has changed and Jira exposes a matching transition.
 Use `aj jira status-map` and `aj jira transitions <id>` to inspect the configured mapping and the live remote workflow before syncing.
 Use `aj jira unlink <id>` before moving an item to a different Jira issue, or `aj jira link <id> <key> --replace` when that relink is intentional.
@@ -148,6 +201,17 @@ Then enable Jira in `.aj/config.toml` and set at least:
 enabled = true
 base_url = "https://your-domain.atlassian.net"
 project = "ABC"
+```
+
+If you prefer, `aj init` can write that config and ensure the Jira space at the same time:
+
+```bash
+aj init \
+  --jira \
+  --jira-base-url https://your-domain.atlassian.net \
+  --jira-space-key ABC \
+  --jira-space-name "Agent Work" \
+  --ensure-jira-space
 ```
 
 ## Release Artifacts

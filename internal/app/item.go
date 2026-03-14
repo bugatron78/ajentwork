@@ -263,6 +263,40 @@ func (s LinkDependencyService) Run(input LinkDependencyInput) (domain.Item, erro
 	})
 }
 
+type SetParentInput struct {
+	RepoPath string
+	ItemID   string
+	ParentID string
+}
+
+type SetParentService struct{}
+
+func (s SetParentService) Run(input SetParentInput) (domain.Item, error) {
+	return store.SetParent(store.SetParentOptions{
+		RepoPath: input.RepoPath,
+		ItemID:   input.ItemID,
+		ParentID: input.ParentID,
+	})
+}
+
+type UnlinkRelationInput struct {
+	RepoPath     string
+	ItemID       string
+	DependsOnID  string
+	RemoveParent bool
+}
+
+type UnlinkRelationService struct{}
+
+func (s UnlinkRelationService) Run(input UnlinkRelationInput) (domain.Item, error) {
+	return store.UnlinkRelation(store.UnlinkRelationOptions{
+		RepoPath:     input.RepoPath,
+		ItemID:       input.ItemID,
+		DependsOnID:  input.DependsOnID,
+		RemoveParent: input.RemoveParent,
+	})
+}
+
 type ChangesInput struct {
 	RepoPath string
 	ItemID   string
@@ -348,6 +382,42 @@ func (s ReadyService) Run(input ReadyInput) ([]store.ReadyEntry, error) {
 	return store.Ready(store.ReadyOptions{
 		RepoPath: input.RepoPath,
 		Agent:    input.Agent,
+	})
+}
+
+type SearchItemsInput struct {
+	RepoPath string
+	Query    string
+	Status   *domain.Status
+	Kind     *domain.ItemKind
+	Limit    int
+}
+
+type SearchItemsService struct{}
+
+func (s SearchItemsService) Run(input SearchItemsInput) (store.SearchItemsResult, error) {
+	return store.SearchItems(store.SearchItemsOptions{
+		RepoPath: input.RepoPath,
+		Query:    input.Query,
+		Status:   input.Status,
+		Kind:     input.Kind,
+		Limit:    input.Limit,
+	})
+}
+
+type ReportInput struct {
+	RepoPath string
+	Agent    string
+	Limit    int
+}
+
+type ReportService struct{}
+
+func (s ReportService) Run(input ReportInput) (store.ReportResult, error) {
+	return store.BuildReport(store.ReportOptions{
+		RepoPath: input.RepoPath,
+		Agent:    input.Agent,
+		Limit:    input.Limit,
 	})
 }
 

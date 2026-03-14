@@ -106,6 +106,19 @@ type LinkDependencyOptions struct {
 	DependsOnID string
 }
 
+type SetParentOptions struct {
+	RepoPath string
+	ItemID   string
+	ParentID string
+}
+
+type UnlinkRelationOptions struct {
+	RepoPath     string
+	ItemID       string
+	DependsOnID  string
+	RemoveParent bool
+}
+
 type ImportJiraIssueOptions struct {
 	RepoPath string
 	IssueKey string
@@ -237,6 +250,43 @@ type ChangesOptions struct {
 type ReadyOptions struct {
 	RepoPath string
 	Agent    string
+}
+
+type SearchItemsOptions struct {
+	RepoPath string
+	Query    string
+	Status   *domain.Status
+	Kind     *domain.ItemKind
+	Limit    int
+}
+
+type SearchItemsResult struct {
+	Query  string        `json:"query,omitempty"`
+	Status string        `json:"status,omitempty"`
+	Kind   string        `json:"kind,omitempty"`
+	Limit  int           `json:"limit"`
+	Items  []domain.Item `json:"items"`
+}
+
+type ReportOptions struct {
+	RepoPath string
+	Agent    string
+	Limit    int
+}
+
+type StatusCount struct {
+	Status domain.Status `json:"status"`
+	Count  int           `json:"count"`
+}
+
+type ReportResult struct {
+	Agent        string         `json:"agent,omitempty"`
+	Total        int            `json:"total"`
+	StatusCounts []StatusCount  `json:"status_counts"`
+	Owned        []InboxEntry   `json:"owned,omitempty"`
+	Ready        []ReadyEntry   `json:"ready,omitempty"`
+	Waiting      []InboxEntry   `json:"waiting,omitempty"`
+	Recent       []domain.Event `json:"recent,omitempty"`
 }
 
 func CreateItem(opts CreateItemOptions) (domain.Item, error) {
@@ -705,6 +755,14 @@ func LinkDependency(opts LinkDependencyOptions) (domain.Item, error) {
 		return domain.Item{}, fmt.Errorf("dependency item %s not found", opts.DependsOnID)
 	}
 
+	items, err := ListItems(opts.RepoPath)
+	if err != nil {
+		return domain.Item{}, err
+	}
+	if wouldCreateDependencyCycle(opts.ItemID, opts.DependsOnID, items) {
+		return domain.Item{}, fmt.Errorf("linking %s depends_on %s would create a dependency cycle", opts.ItemID, opts.DependsOnID)
+	}
+
 	item, itemDir, err := loadItemForMutation(opts.RepoPath, opts.ItemID)
 	if err != nil {
 		return domain.Item{}, err
@@ -725,6 +783,100 @@ func LinkDependency(opts LinkDependencyOptions) (domain.Item, error) {
 		return domain.Item{}, err
 	}
 	return item, nil
+}
+
+func SetParent(opts SetParentOptions) (domain.Item, error) {
+	if strings.TrimSpace(opts.ItemID) == "" {
+		return domain.Item{}, errors.New("item id is required")
+	}
+	if strings.TrimSpace(opts.ParentID) == "" {
+		return domain.Item{}, errors.New("parent id is required")
+	}
+	if opts.ItemID == opts.ParentID {
+		return domain.Item{}, errors.New("an item cannot be its own parent")
+	}
+
+	if _, err := GetItem(opts.RepoPath, opts.ParentID); err != nil {
+		return domain.Item{}, fmt.Errorf("parent item %s not found", opts.ParentID)
+	}
+
+	items, err := ListItems(opts.RepoPath)
+	if err != nil {
+		return domain.Item{}, err
+	}
+	if wouldCreateParentCycle(opts.ItemID, opts.ParentID, items) {
+		return domain.Item{}, fmt.Errorf("setting parent of %s to %s would create a hierarchy cycle", opts.ItemID, opts.ParentID)
+	}
+
+	item, itemDir, err := loadItemForMutation(opts.RepoPath, opts.ItemID)
+	if err != nil {
+		return domain.Item{}, err
+	}
+	if item.ParentID == opts.ParentID {
+		return item, nil
+	}
+
+	item.ParentID = opts.ParentID
+	item.UpdatedAt = time.Now().UTC().Truncate(time.Second)
+	item.Summary = fmt.Sprintf("set parent to %s", opts.ParentID)
+
+	if err := persistItemMutation(itemDir, item, "linked_parent", "system", item.Summary); err != nil {
+		return domain.Item{}, err
+	}
+	return item, nil
+}
+
+func UnlinkRelation(opts UnlinkRelationOptions) (domain.Item, error) {
+	if strings.TrimSpace(opts.ItemID) == "" {
+		return domain.Item{}, errors.New("item id is required")
+	}
+	if strings.TrimSpace(opts.DependsOnID) == "" && !opts.RemoveParent {
+		return domain.Item{}, errors.New("one of dependency id or remove_parent is required")
+	}
+	if strings.TrimSpace(opts.DependsOnID) != "" && opts.RemoveParent {
+		return domain.Item{}, errors.New("choose either dependency unlink or parent unlink, not both")
+	}
+
+	item, itemDir, err := loadItemForMutation(opts.RepoPath, opts.ItemID)
+	if err != nil {
+		return domain.Item{}, err
+	}
+
+	switch {
+	case opts.RemoveParent:
+		if item.ParentID == "" {
+			return domain.Item{}, fmt.Errorf("item %s has no parent", item.ID)
+		}
+		oldParent := item.ParentID
+		item.ParentID = ""
+		item.UpdatedAt = time.Now().UTC().Truncate(time.Second)
+		item.Summary = fmt.Sprintf("removed parent %s", oldParent)
+		if err := persistItemMutation(itemDir, item, "unlinked_parent", "system", item.Summary); err != nil {
+			return domain.Item{}, err
+		}
+		return item, nil
+	default:
+		dependencyID := strings.TrimSpace(opts.DependsOnID)
+		filtered := make([]string, 0, len(item.DependsOn))
+		found := false
+		for _, depID := range item.DependsOn {
+			if depID == dependencyID {
+				found = true
+				continue
+			}
+			filtered = append(filtered, depID)
+		}
+		if !found {
+			return domain.Item{}, fmt.Errorf("item %s does not depend on %s", item.ID, dependencyID)
+		}
+		item.DependsOn = filtered
+		item.UpdatedAt = time.Now().UTC().Truncate(time.Second)
+		item.Summary = fmt.Sprintf("removed dependency on %s", dependencyID)
+		if err := persistItemMutation(itemDir, item, "unlinked_dependency", "system", item.Summary); err != nil {
+			return domain.Item{}, err
+		}
+		return item, nil
+	}
 }
 
 func ImportJiraIssue(opts ImportJiraIssueOptions) (ImportJiraIssueResult, error) {
@@ -1282,6 +1434,171 @@ func ListItems(repoPath string) ([]domain.Item, error) {
 	})
 
 	return items, nil
+}
+
+func SearchItems(opts SearchItemsOptions) (SearchItemsResult, error) {
+	items, err := ListItems(opts.RepoPath)
+	if err != nil {
+		return SearchItemsResult{}, err
+	}
+
+	query := strings.TrimSpace(opts.Query)
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+
+	filtered := make([]domain.Item, 0, len(items))
+	for _, item := range items {
+		if opts.Status != nil && item.Status != *opts.Status {
+			continue
+		}
+		if opts.Kind != nil && item.Kind != *opts.Kind {
+			continue
+		}
+		if query != "" && !itemMatchesQuery(item, query) {
+			continue
+		}
+		filtered = append(filtered, item)
+		if len(filtered) >= limit {
+			break
+		}
+	}
+
+	result := SearchItemsResult{
+		Query: query,
+		Limit: limit,
+		Items: filtered,
+	}
+	if opts.Status != nil {
+		result.Status = string(*opts.Status)
+	}
+	if opts.Kind != nil {
+		result.Kind = string(*opts.Kind)
+	}
+	return result, nil
+}
+
+func BuildReport(opts ReportOptions) (ReportResult, error) {
+	items, err := ListItems(opts.RepoPath)
+	if err != nil {
+		return ReportResult{}, err
+	}
+
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = 5
+	}
+
+	statusOrder := []domain.Status{
+		domain.StatusTodo,
+		domain.StatusInProgress,
+		domain.StatusBlocked,
+		domain.StatusInReview,
+		domain.StatusDone,
+		domain.StatusCanceled,
+	}
+	counts := make(map[domain.Status]int, len(statusOrder))
+	for _, item := range items {
+		counts[item.Status]++
+	}
+	statusCounts := make([]StatusCount, 0, len(statusOrder))
+	for _, status := range statusOrder {
+		statusCounts = append(statusCounts, StatusCount{
+			Status: status,
+			Count:  counts[status],
+		})
+	}
+
+	inbox, err := Inbox(opts.RepoPath, opts.Agent)
+	if err != nil {
+		return ReportResult{}, err
+	}
+	ready, err := Ready(ReadyOptions{
+		RepoPath: opts.RepoPath,
+		Agent:    opts.Agent,
+	})
+	if err != nil {
+		return ReportResult{}, err
+	}
+	recent, err := ListChanges(ChangesOptions{
+		RepoPath: opts.RepoPath,
+		Limit:    limit,
+	})
+	if err != nil {
+		return ReportResult{}, err
+	}
+
+	report := ReportResult{
+		Agent:        strings.TrimSpace(opts.Agent),
+		Total:        len(items),
+		StatusCounts: statusCounts,
+		Owned:        takeInboxByReason(inbox, "owned", limit),
+		Ready:        takeReadyEntries(ready, limit),
+		Waiting:      takeInboxByReason(inbox, "waiting", limit),
+		Recent:       recent,
+	}
+	return report, nil
+}
+
+func itemMatchesQuery(item domain.Item, query string) bool {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return true
+	}
+	fields := []string{
+		item.ID,
+		string(item.Kind),
+		string(item.Status),
+		item.Title,
+		item.Goal,
+		item.Summary,
+		item.NextAction,
+		item.ParentID,
+		strings.Join(item.Acceptance, " "),
+		strings.Join(item.Constraints, " "),
+		strings.Join(item.Risks, " "),
+		strings.Join(item.RelevantFiles, " "),
+		strings.Join(item.Verification, " "),
+		strings.Join(item.DependsOn, " "),
+	}
+	if item.Checkpoint != nil {
+		fields = append(fields,
+			item.Checkpoint.Summary,
+			strings.Join(item.Checkpoint.Risks, " "),
+			strings.Join(item.Checkpoint.Verify, " "),
+		)
+	}
+	if item.Jira != nil {
+		fields = append(fields, item.Jira.Key, item.Jira.URL, item.Jira.SyncState)
+	}
+	for _, field := range fields {
+		if strings.Contains(strings.ToLower(field), query) {
+			return true
+		}
+	}
+	return false
+}
+
+func takeInboxByReason(entries []InboxEntry, reason string, limit int) []InboxEntry {
+	filtered := make([]InboxEntry, 0, limit)
+	for _, entry := range entries {
+		if entry.Reason != reason {
+			continue
+		}
+		filtered = append(filtered, entry)
+		if len(filtered) >= limit {
+			break
+		}
+	}
+	return filtered
+}
+
+func takeReadyEntries(entries []ReadyEntry, limit int) []ReadyEntry {
+	if len(entries) <= limit {
+		return entries
+	}
+	return entries[:limit]
 }
 
 func RecommendNext(repoPath, agent string) (NextItemResult, error) {
@@ -1886,6 +2203,79 @@ func unmetDependencies(item domain.Item, itemMap map[string]domain.Item) []strin
 	return unmet
 }
 
+func itemsBlockedBy(targetID string, items []domain.Item) []string {
+	if strings.TrimSpace(targetID) == "" {
+		return nil
+	}
+	var blocked []string
+	for _, item := range items {
+		for _, depID := range item.DependsOn {
+			if depID == targetID {
+				blocked = append(blocked, item.ID)
+				break
+			}
+		}
+	}
+	sort.Strings(blocked)
+	return blocked
+}
+
+func childItems(parentID string, items []domain.Item) []string {
+	if strings.TrimSpace(parentID) == "" {
+		return nil
+	}
+	var children []string
+	for _, item := range items {
+		if item.ParentID == parentID {
+			children = append(children, item.ID)
+		}
+	}
+	sort.Strings(children)
+	return children
+}
+
+func wouldCreateDependencyCycle(itemID, dependencyID string, items []domain.Item) bool {
+	index := indexItems(items)
+	seen := map[string]bool{}
+	var walk func(string) bool
+	walk = func(current string) bool {
+		if current == itemID {
+			return true
+		}
+		if seen[current] {
+			return false
+		}
+		seen[current] = true
+		item, ok := index[current]
+		if !ok {
+			return false
+		}
+		for _, depID := range item.DependsOn {
+			if walk(depID) {
+				return true
+			}
+		}
+		return false
+	}
+	return walk(dependencyID)
+}
+
+func wouldCreateParentCycle(itemID, parentID string, items []domain.Item) bool {
+	index := indexItems(items)
+	current := strings.TrimSpace(parentID)
+	for current != "" {
+		if current == itemID {
+			return true
+		}
+		parent, ok := index[current]
+		if !ok {
+			return false
+		}
+		current = strings.TrimSpace(parent.ParentID)
+	}
+	return false
+}
+
 func marshalItem(item domain.Item) string {
 	var lines []string
 	lines = append(lines, fmt.Sprintf("id = %s", strconv.Quote(item.ID)))
@@ -1910,6 +2300,7 @@ func marshalItem(item domain.Item) string {
 		lines = append(lines, fmt.Sprintf("checkpoint_created_at = %s", strconv.Quote(item.Checkpoint.CreatedAt.Format(time.RFC3339))))
 		lines = append(lines, fmt.Sprintf("checkpoint_actor = %s", strconv.Quote(item.Checkpoint.Actor)))
 	}
+	lines = append(lines, fmt.Sprintf("parent_id = %s", strconv.Quote(item.ParentID)))
 	lines = append(lines, fmt.Sprintf("depends_on = %s", marshalStringList(item.DependsOn)))
 	if item.Lease != nil {
 		lines = append(lines, fmt.Sprintf("lease_owner = %s", strconv.Quote(item.Lease.Owner)))
@@ -2068,6 +2459,10 @@ func parseItem(raw string) (domain.Item, error) {
 			Actor:     checkpointActor,
 		}
 	}
+	parentID, err := requiredOptionalString(values, "parent_id")
+	if err != nil {
+		return domain.Item{}, err
+	}
 	dependsOn, err := parseStringList(values["depends_on"])
 	if err != nil {
 		return domain.Item{}, fmt.Errorf("parse depends_on: %w", err)
@@ -2156,10 +2551,23 @@ func parseItem(raw string) (domain.Item, error) {
 		RelevantFiles: relevantFiles,
 		Verification:  verification,
 		Checkpoint:    checkpoint,
+		ParentID:      parentID,
 		DependsOn:     dependsOn,
 		Lease:         lease,
 		Jira:          jiraLink,
 	}, nil
+}
+
+func requiredOptionalString(values map[string]string, key string) (string, error) {
+	raw, ok := values[key]
+	if !ok {
+		return "", nil
+	}
+	value, err := strconv.Unquote(raw)
+	if err != nil {
+		return "", fmt.Errorf("invalid quoted value for %s: %w", key, err)
+	}
+	return value, nil
 }
 
 func writeCreatedEvent(eventsDir string, item domain.Item) error {

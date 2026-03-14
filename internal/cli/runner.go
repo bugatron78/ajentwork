@@ -15,6 +15,7 @@ import (
 	"ajentwork/internal/domain"
 	"ajentwork/internal/help"
 	"ajentwork/internal/render"
+	"ajentwork/internal/store"
 )
 
 type Runner struct {
@@ -83,6 +84,8 @@ func (r Runner) run(args []string) (int, error) {
 		return r.runList(globals, commandArgs)
 	case "show":
 		return r.runShow(globals, commandArgs)
+	case "search":
+		return r.runSearch(globals, commandArgs)
 	case "update":
 		return r.runUpdate(globals, commandArgs)
 	case "block":
@@ -107,6 +110,8 @@ func (r Runner) run(args []string) (int, error) {
 		return r.runInbox(globals, commandArgs)
 	case "link":
 		return r.runLink(globals, commandArgs)
+	case "unlink":
+		return r.runUnlink(globals, commandArgs)
 	case "changes":
 		return r.runChanges(globals, commandArgs)
 	case "attach":
@@ -117,6 +122,8 @@ func (r Runner) run(args []string) (int, error) {
 		return r.runArtifacts(globals, commandArgs)
 	case "ready":
 		return r.runReady(globals, commandArgs)
+	case "report":
+		return r.runReport(globals, commandArgs)
 	case "jira":
 		return r.runJira(globals, commandArgs)
 	case "version":
@@ -233,17 +240,70 @@ func (r Runner) runInit(globals globalOptions, args []string) (int, error) {
 	}
 
 	force := false
-	for _, arg := range args {
-		switch arg {
+	jiraEnabled := false
+	jiraBaseURL := ""
+	jiraProject := ""
+	ensureJiraSpace := false
+	jiraSpaceName := ""
+	jiraSpaceType := ""
+	jiraSpaceTemplate := ""
+
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
 		case "--force":
 			force = true
+		case "--jira":
+			jiraEnabled = true
+		case "--jira-base-url":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --jira-base-url")
+			}
+			jiraBaseURL = args[i]
+		case "--jira-space-key":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --jira-space-key")
+			}
+			jiraProject = args[i]
+		case "--jira-space-name":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --jira-space-name")
+			}
+			jiraSpaceName = args[i]
+		case "--jira-space-type":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --jira-space-type")
+			}
+			jiraSpaceType = args[i]
+		case "--jira-space-template":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --jira-space-template")
+			}
+			jiraSpaceTemplate = args[i]
+		case "--ensure-jira-space":
+			ensureJiraSpace = true
+			jiraEnabled = true
 		default:
-			return 2, fmt.Errorf("unknown option for init: %s", arg)
+			return 2, fmt.Errorf("unknown option for init: %s", args[i])
 		}
 	}
 
 	service := app.InitService{}
-	result, err := service.Run(globals.repoPath, force)
+	result, err := service.Run(app.InitInput{
+		RepoPath:          globals.repoPath,
+		Force:             force,
+		JiraEnabled:       jiraEnabled,
+		JiraBaseURL:       jiraBaseURL,
+		JiraProject:       jiraProject,
+		EnsureJiraSpace:   ensureJiraSpace,
+		JiraSpaceName:     jiraSpaceName,
+		JiraSpaceType:     jiraSpaceType,
+		JiraSpaceTemplate: jiraSpaceTemplate,
+	})
 	if err != nil {
 		return 1, err
 	}
@@ -253,7 +313,20 @@ func (r Runner) runInit(globals globalOptions, args []string) (int, error) {
 		if result.AlreadyReady {
 			_, err = fmt.Fprintf(r.stdout, "aj is already initialized in %s\nconfig: %s\n", result.RepoPath, result.ConfigPath)
 		} else {
-			_, err = fmt.Fprintf(r.stdout, "initialized aj in %s\nconfig: %s\n", result.RepoPath, result.ConfigPath)
+			lines := []string{
+				fmt.Sprintf("initialized aj in %s", result.RepoPath),
+				fmt.Sprintf("config: %s", result.ConfigPath),
+			}
+			if result.JiraEnabled {
+				lines = append(lines, fmt.Sprintf("jira enabled: %t", result.JiraEnabled))
+			}
+			if strings.TrimSpace(result.JiraProject) != "" {
+				lines = append(lines, fmt.Sprintf("jira space: %s", result.JiraProject))
+			}
+			if result.JiraSpaceCreated {
+				lines = append(lines, "jira space created")
+			}
+			_, err = fmt.Fprintln(r.stdout, strings.Join(lines, "\n"))
 		}
 		return 0, err
 	case domain.FormatPrompt:
@@ -261,13 +334,21 @@ func (r Runner) runInit(globals globalOptions, args []string) (int, error) {
 		if result.AlreadyReady {
 			status = "already initialized"
 		}
-		_, err = fmt.Fprintf(r.stdout, "Status: %s\nRepo: %s\nConfig: %s\n", status, result.RepoPath, result.ConfigPath)
+		_, err = fmt.Fprintf(r.stdout, "Status: %s\nRepo: %s\nConfig: %s\nJira Enabled: %t\nJira Space: %s\nJira Space Created: %t\n", status, result.RepoPath, result.ConfigPath, result.JiraEnabled, fallbackPromptValue(result.JiraProject), result.JiraSpaceCreated)
 		return 0, err
 	case domain.FormatJSON:
 		return r.renderJSON(result)
 	default:
 		return 2, fmt.Errorf("unsupported format %q", globals.format)
 	}
+}
+
+func fallbackPromptValue(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "-"
+	}
+	return value
 }
 
 func (r Runner) runVersion(globals globalOptions, args []string) (int, error) {
@@ -478,6 +559,12 @@ func (r Runner) runShow(globals globalOptions, args []string) (int, error) {
 	if err != nil {
 		return 1, err
 	}
+	listService := app.ListItemsService{}
+	allItems, err := listService.Run(globals.repoPath)
+	if err != nil {
+		return 1, err
+	}
+	relations := render.ItemRelations(item, allItems)
 	artifactService := app.ListArtifactsService{}
 	artifacts, err := artifactService.Run(app.ListArtifactsInput{
 		RepoPath: globals.repoPath,
@@ -504,30 +591,117 @@ func (r Runner) runShow(globals globalOptions, args []string) (int, error) {
 	switch globals.format {
 	case domain.FormatBrief:
 		if showHistory {
-			_, err = fmt.Fprintf(r.stdout, "%s\n%s\n", render.ItemWithHistoryBrief(item, events), render.ArtifactsSectionBrief(artifacts))
+			_, err = fmt.Fprintf(r.stdout, "%s\n%s\n", render.ItemWithHistoryBriefAndRelations(item, relations, events), render.ArtifactsSectionBrief(artifacts))
 		} else {
-			_, err = fmt.Fprintf(r.stdout, "%s\n%s\n", render.ItemShowBrief(item), render.ArtifactsSectionBrief(artifacts))
+			_, err = fmt.Fprintf(r.stdout, "%s\n%s\n", render.ItemShowBrief(item, relations), render.ArtifactsSectionBrief(artifacts))
 		}
 		return 0, err
 	case domain.FormatPrompt:
 		if showHistory {
-			_, err = fmt.Fprintf(r.stdout, "%s\n%s\n", render.ItemWithHistoryPrompt(item, events), render.ArtifactsSectionPrompt(artifacts))
+			_, err = fmt.Fprintf(r.stdout, "%s\n%s\n", render.ItemWithHistoryPromptAndRelations(item, relations, events), render.ArtifactsSectionPrompt(artifacts))
 		} else {
-			_, err = fmt.Fprintf(r.stdout, "%s\n%s\n", render.ItemShowPrompt(item), render.ArtifactsSectionPrompt(artifacts))
+			_, err = fmt.Fprintf(r.stdout, "%s\n%s\n", render.ItemShowPrompt(item, relations), render.ArtifactsSectionPrompt(artifacts))
 		}
 		return 0, err
 	case domain.FormatJSON:
 		if showHistory {
 			payload := struct {
-				Item    domain.Item    `json:"item"`
-				History []domain.Event `json:"history"`
+				Item      domain.Item                `json:"item"`
+				Relations render.ItemRelationSummary `json:"relations"`
+				History   []domain.Event             `json:"history"`
 			}{
-				Item:    item,
-				History: events,
+				Item:      item,
+				Relations: relations,
+				History:   events,
 			}
 			return r.renderJSON(payload)
 		}
-		return r.renderJSON(item)
+		payload := struct {
+			Item      domain.Item                `json:"item"`
+			Relations render.ItemRelationSummary `json:"relations"`
+		}{
+			Item:      item,
+			Relations: relations,
+		}
+		return r.renderJSON(payload)
+	default:
+		return 2, fmt.Errorf("unsupported format %q", globals.format)
+	}
+}
+
+func (r Runner) runSearch(globals globalOptions, args []string) (int, error) {
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			return r.renderCommandHelp("search", globals.format)
+		}
+	}
+
+	queryTerms := make([]string, 0, len(args))
+	var status *domain.Status
+	var kind *domain.ItemKind
+	limit := 20
+
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--status":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --status")
+			}
+			parsed, err := domain.ParseStatus(args[i])
+			if err != nil {
+				return 2, err
+			}
+			status = &parsed
+		case "--kind":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --kind")
+			}
+			parsed, err := domain.ParseItemKind(args[i])
+			if err != nil {
+				return 2, err
+			}
+			kind = &parsed
+		case "--limit":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --limit")
+			}
+			parsed, err := strconv.Atoi(args[i])
+			if err != nil || parsed <= 0 {
+				return 2, fmt.Errorf("invalid --limit value %q", args[i])
+			}
+			limit = parsed
+		default:
+			if strings.HasPrefix(args[i], "--") {
+				return 2, fmt.Errorf("unknown option for search: %s", args[i])
+			}
+			queryTerms = append(queryTerms, args[i])
+		}
+	}
+
+	service := app.SearchItemsService{}
+	result, err := service.Run(app.SearchItemsInput{
+		RepoPath: globals.repoPath,
+		Query:    strings.Join(queryTerms, " "),
+		Status:   status,
+		Kind:     kind,
+		Limit:    limit,
+	})
+	if err != nil {
+		return 1, err
+	}
+
+	switch globals.format {
+	case domain.FormatBrief:
+		_, err = fmt.Fprintln(r.stdout, render.ItemSearchBrief(result))
+		return 0, err
+	case domain.FormatPrompt:
+		_, err = fmt.Fprintln(r.stdout, render.ItemSearchPrompt(result))
+		return 0, err
+	case domain.FormatJSON:
+		return r.renderJSON(result)
 	default:
 		return 2, fmt.Errorf("unsupported format %q", globals.format)
 	}
@@ -1444,11 +1618,12 @@ func (r Runner) runLink(globals globalOptions, args []string) (int, error) {
 		}
 	}
 	if len(args) == 0 {
-		return 2, errors.New("usage: aj link <id> --depends-on <id>")
+		return 2, errors.New("usage: aj link <id> (--depends-on <id> | --parent <id>)")
 	}
 
 	itemID := args[0]
 	dependencyID := ""
+	parentID := ""
 	for i := 1; i < len(args); i++ {
 		switch args[i] {
 		case "--depends-on":
@@ -1457,19 +1632,103 @@ func (r Runner) runLink(globals globalOptions, args []string) (int, error) {
 				return 2, errors.New("missing value for --depends-on")
 			}
 			dependencyID = args[i]
+		case "--parent":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --parent")
+			}
+			parentID = args[i]
 		default:
 			return 2, fmt.Errorf("unknown option for link: %s", args[i])
 		}
 	}
-	if dependencyID == "" {
-		return 2, errors.New("usage: aj link <id> --depends-on <id>")
+	if (dependencyID == "" && parentID == "") || (dependencyID != "" && parentID != "") {
+		return 2, errors.New("usage: aj link <id> (--depends-on <id> | --parent <id>)")
 	}
 
-	service := app.LinkDependencyService{}
-	item, err := service.Run(app.LinkDependencyInput{
-		RepoPath:    globals.repoPath,
-		ItemID:      itemID,
-		DependsOnID: dependencyID,
+	var item domain.Item
+	var err error
+	if dependencyID != "" {
+		service := app.LinkDependencyService{}
+		item, err = service.Run(app.LinkDependencyInput{
+			RepoPath:    globals.repoPath,
+			ItemID:      itemID,
+			DependsOnID: dependencyID,
+		})
+		if err != nil {
+			return 1, err
+		}
+	} else {
+		service := app.SetParentService{}
+		item, err = service.Run(app.SetParentInput{
+			RepoPath: globals.repoPath,
+			ItemID:   itemID,
+			ParentID: parentID,
+		})
+		if err != nil {
+			return 1, err
+		}
+	}
+
+	switch globals.format {
+	case domain.FormatBrief:
+		if dependencyID != "" {
+			_, err = fmt.Fprintln(r.stdout, render.ItemLinkedBrief(item, dependencyID))
+		} else {
+			_, err = fmt.Fprintln(r.stdout, render.ItemParentLinkedBrief(item, parentID))
+		}
+		return 0, err
+	case domain.FormatPrompt:
+		if dependencyID != "" {
+			_, err = fmt.Fprintln(r.stdout, render.ItemLinkedPrompt(item, dependencyID))
+		} else {
+			_, err = fmt.Fprintln(r.stdout, render.ItemParentLinkedPrompt(item, parentID))
+		}
+		return 0, err
+	case domain.FormatJSON:
+		return r.renderJSON(item)
+	default:
+		return 2, fmt.Errorf("unsupported format %q", globals.format)
+	}
+}
+
+func (r Runner) runUnlink(globals globalOptions, args []string) (int, error) {
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			return r.renderCommandHelp("unlink", globals.format)
+		}
+	}
+	if len(args) == 0 {
+		return 2, errors.New("usage: aj unlink <id> (--depends-on <id> | --parent)")
+	}
+
+	itemID := args[0]
+	dependencyID := ""
+	removeParent := false
+	for i := 1; i < len(args); i++ {
+		switch args[i] {
+		case "--depends-on":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --depends-on")
+			}
+			dependencyID = args[i]
+		case "--parent":
+			removeParent = true
+		default:
+			return 2, fmt.Errorf("unknown option for unlink: %s", args[i])
+		}
+	}
+	if (dependencyID == "" && !removeParent) || (dependencyID != "" && removeParent) {
+		return 2, errors.New("usage: aj unlink <id> (--depends-on <id> | --parent)")
+	}
+
+	service := app.UnlinkRelationService{}
+	item, err := service.Run(app.UnlinkRelationInput{
+		RepoPath:     globals.repoPath,
+		ItemID:       itemID,
+		DependsOnID:  dependencyID,
+		RemoveParent: removeParent,
 	})
 	if err != nil {
 		return 1, err
@@ -1477,10 +1736,18 @@ func (r Runner) runLink(globals globalOptions, args []string) (int, error) {
 
 	switch globals.format {
 	case domain.FormatBrief:
-		_, err = fmt.Fprintln(r.stdout, render.ItemLinkedBrief(item, dependencyID))
+		if removeParent {
+			_, err = fmt.Fprintln(r.stdout, render.ItemParentUnlinkedBrief(item))
+		} else {
+			_, err = fmt.Fprintln(r.stdout, render.ItemUnlinkedBrief(item, dependencyID))
+		}
 		return 0, err
 	case domain.FormatPrompt:
-		_, err = fmt.Fprintln(r.stdout, render.ItemLinkedPrompt(item, dependencyID))
+		if removeParent {
+			_, err = fmt.Fprintln(r.stdout, render.ItemUnlinkedPrompt(item, "parent", ""))
+		} else {
+			_, err = fmt.Fprintln(r.stdout, render.ItemUnlinkedPrompt(item, "depends_on", dependencyID))
+		}
 		return 0, err
 	case domain.FormatJSON:
 		return r.renderJSON(item)
@@ -1811,6 +2078,62 @@ func (r Runner) runReady(globals globalOptions, args []string) (int, error) {
 	}
 }
 
+func (r Runner) runReport(globals globalOptions, args []string) (int, error) {
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			return r.renderCommandHelp("report", globals.format)
+		}
+	}
+
+	agent := ""
+	limit := 5
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--agent":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --agent")
+			}
+			agent = args[i]
+		case "--limit":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --limit")
+			}
+			parsed, err := strconv.Atoi(args[i])
+			if err != nil || parsed <= 0 {
+				return 2, fmt.Errorf("invalid --limit value %q", args[i])
+			}
+			limit = parsed
+		default:
+			return 2, fmt.Errorf("unknown option for report: %s", args[i])
+		}
+	}
+
+	service := app.ReportService{}
+	result, err := service.Run(app.ReportInput{
+		RepoPath: globals.repoPath,
+		Agent:    agent,
+		Limit:    limit,
+	})
+	if err != nil {
+		return 1, err
+	}
+
+	switch globals.format {
+	case domain.FormatBrief:
+		_, err = fmt.Fprintln(r.stdout, render.ReportBrief(result))
+		return 0, err
+	case domain.FormatPrompt:
+		_, err = fmt.Fprintln(r.stdout, render.ReportPrompt(result))
+		return 0, err
+	case domain.FormatJSON:
+		return r.renderJSON(result)
+	default:
+		return 2, fmt.Errorf("unsupported format %q", globals.format)
+	}
+}
+
 func (r Runner) runJira(globals globalOptions, args []string) (int, error) {
 	if len(args) == 0 {
 		return r.renderCommandHelp("jira", globals.format)
@@ -1820,6 +2143,8 @@ func (r Runner) runJira(globals globalOptions, args []string) (int, error) {
 	}
 
 	switch args[0] {
+	case "space":
+		return r.runJiraSpace(globals, args[1:])
 	case "pull":
 		return r.runJiraPull(globals, args[1:])
 	case "push":
@@ -1840,6 +2165,219 @@ func (r Runner) runJira(globals globalOptions, args []string) (int, error) {
 		return r.runJiraTransitions(globals, args[1:])
 	default:
 		return 2, fmt.Errorf("unknown jira subcommand %q\ntry: aj jira --help", args[0])
+	}
+}
+
+func (r Runner) runJiraSpace(globals globalOptions, args []string) (int, error) {
+	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
+		return r.renderCommandHelp("jira", globals.format)
+	}
+
+	switch args[0] {
+	case "exists":
+		return r.runJiraSpaceExists(globals, args[1:])
+	case "create":
+		return r.runJiraSpaceCreate(globals, args[1:])
+	case "ensure":
+		return r.runJiraSpaceEnsure(globals, args[1:])
+	case "ls":
+		return r.runJiraSpaceList(globals, args[1:])
+	default:
+		return 2, fmt.Errorf("unknown jira space subcommand %q\ntry: aj jira --help", args[0])
+	}
+}
+
+func (r Runner) runJiraSpaceExists(globals globalOptions, args []string) (int, error) {
+	key := ""
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--key":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --key")
+			}
+			key = args[i]
+		case "--help", "-h":
+			return r.renderCommandHelp("jira", globals.format)
+		default:
+			return 2, fmt.Errorf("unknown option for jira space exists: %s", args[i])
+		}
+	}
+
+	service := app.JiraSpaceExistsService{}
+	result, err := service.Run(app.JiraSpaceExistsInput{
+		RepoPath: globals.repoPath,
+		Key:      key,
+	})
+	if err != nil {
+		return 1, err
+	}
+
+	switch globals.format {
+	case domain.FormatBrief:
+		_, err = fmt.Fprintln(r.stdout, render.JiraSpaceExistsBrief(result))
+		return 0, err
+	case domain.FormatPrompt:
+		_, err = fmt.Fprintln(r.stdout, render.JiraSpaceExistsPrompt(result))
+		return 0, err
+	case domain.FormatJSON:
+		return r.renderJSON(result)
+	default:
+		return 2, fmt.Errorf("unsupported format %q", globals.format)
+	}
+}
+
+func (r Runner) runJiraSpaceCreate(globals globalOptions, args []string) (int, error) {
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			return r.renderCommandHelp("jira", globals.format)
+		}
+	}
+	key, name, projectType, template, err := parseJiraSpaceArgs(args)
+	if err != nil {
+		return 2, err
+	}
+
+	service := app.JiraSpaceCreateService{}
+	result, err := service.Run(app.JiraSpaceCreateInput{
+		RepoPath: globals.repoPath,
+		Key:      key,
+		Name:     name,
+		Type:     projectType,
+		Template: template,
+	})
+	if err != nil {
+		return 1, err
+	}
+	return r.renderJiraSpaceCreateResult(globals.format, result)
+}
+
+func (r Runner) runJiraSpaceEnsure(globals globalOptions, args []string) (int, error) {
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			return r.renderCommandHelp("jira", globals.format)
+		}
+	}
+	key, name, projectType, template, err := parseJiraSpaceArgs(args)
+	if err != nil {
+		return 2, err
+	}
+
+	service := app.JiraSpaceEnsureService{}
+	result, err := service.Run(app.JiraSpaceEnsureInput{
+		RepoPath: globals.repoPath,
+		Key:      key,
+		Name:     name,
+		Type:     projectType,
+		Template: template,
+	})
+	if err != nil {
+		return 1, err
+	}
+	return r.renderJiraSpaceCreateResult(globals.format, result)
+}
+
+func (r Runner) runJiraSpaceList(globals globalOptions, args []string) (int, error) {
+	query := ""
+	limit := 20
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--query":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --query")
+			}
+			query = args[i]
+		case "--limit":
+			i++
+			if i >= len(args) {
+				return 2, errors.New("missing value for --limit")
+			}
+			parsed, err := strconv.Atoi(args[i])
+			if err != nil || parsed <= 0 {
+				return 2, fmt.Errorf("invalid --limit value %q", args[i])
+			}
+			limit = parsed
+		case "--help", "-h":
+			return r.renderCommandHelp("jira", globals.format)
+		default:
+			return 2, fmt.Errorf("unknown option for jira space ls: %s", args[i])
+		}
+	}
+
+	service := app.JiraSpaceListService{}
+	result, err := service.Run(app.JiraSpaceListInput{
+		RepoPath: globals.repoPath,
+		Query:    query,
+		Limit:    limit,
+	})
+	if err != nil {
+		return 1, err
+	}
+	switch globals.format {
+	case domain.FormatBrief:
+		_, err = fmt.Fprintln(r.stdout, render.JiraSpaceListBrief(result))
+		return 0, err
+	case domain.FormatPrompt:
+		_, err = fmt.Fprintln(r.stdout, render.JiraSpaceListPrompt(result))
+		return 0, err
+	case domain.FormatJSON:
+		return r.renderJSON(result)
+	default:
+		return 2, fmt.Errorf("unsupported format %q", globals.format)
+	}
+}
+
+func parseJiraSpaceArgs(args []string) (string, string, string, string, error) {
+	key := ""
+	name := ""
+	projectType := ""
+	template := ""
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--key":
+			i++
+			if i >= len(args) {
+				return "", "", "", "", errors.New("missing value for --key")
+			}
+			key = args[i]
+		case "--name":
+			i++
+			if i >= len(args) {
+				return "", "", "", "", errors.New("missing value for --name")
+			}
+			name = args[i]
+		case "--type":
+			i++
+			if i >= len(args) {
+				return "", "", "", "", errors.New("missing value for --type")
+			}
+			projectType = args[i]
+		case "--template":
+			i++
+			if i >= len(args) {
+				return "", "", "", "", errors.New("missing value for --template")
+			}
+			template = args[i]
+		default:
+			return "", "", "", "", fmt.Errorf("unknown jira space option %s", args[i])
+		}
+	}
+	return key, name, projectType, template, nil
+}
+
+func (r Runner) renderJiraSpaceCreateResult(format domain.OutputFormat, result store.JiraSpaceCreateResult) (int, error) {
+	switch format {
+	case domain.FormatBrief:
+		_, err := fmt.Fprintln(r.stdout, render.JiraSpaceCreateBrief(result))
+		return 0, err
+	case domain.FormatPrompt:
+		_, err := fmt.Fprintln(r.stdout, render.JiraSpaceCreatePrompt(result))
+		return 0, err
+	case domain.FormatJSON:
+		return r.renderJSON(result)
+	default:
+		return 2, fmt.Errorf("unsupported format %q", format)
 	}
 }
 

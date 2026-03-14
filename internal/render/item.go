@@ -2,11 +2,18 @@ package render
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"ajentwork/internal/domain"
 	"ajentwork/internal/store"
 )
+
+type ItemRelationSummary struct {
+	Parent   string   `json:"parent,omitempty"`
+	Children []string `json:"children,omitempty"`
+	Blocks   []string `json:"blocks,omitempty"`
+}
 
 func ItemCreatedBrief(item domain.Item) string {
 	return fmt.Sprintf("created %s [%s] %s", item.ID, item.Kind, item.Title)
@@ -57,7 +64,7 @@ func ItemListPrompt(items []domain.Item) string {
 	return strings.Join(lines, "\n")
 }
 
-func ItemShowBrief(item domain.Item) string {
+func ItemShowBrief(item domain.Item, relations ItemRelationSummary) string {
 	lines := []string{
 		fmt.Sprintf("ID: %s", item.ID),
 		fmt.Sprintf("Kind: %s", item.Kind),
@@ -78,13 +85,22 @@ func ItemShowBrief(item domain.Item) string {
 	if item.Jira != nil {
 		lines = append(lines, fmt.Sprintf("Jira: %s", item.Jira.Key))
 	}
+	if item.ParentID != "" {
+		lines = append(lines, fmt.Sprintf("Parent: %s", item.ParentID))
+	}
 	if len(item.DependsOn) > 0 {
 		lines = append(lines, fmt.Sprintf("Depends On: %s", strings.Join(item.DependsOn, ", ")))
+	}
+	if len(relations.Children) > 0 {
+		lines = append(lines, fmt.Sprintf("Children: %s", strings.Join(relations.Children, ", ")))
+	}
+	if len(relations.Blocks) > 0 {
+		lines = append(lines, fmt.Sprintf("Blocks: %s", strings.Join(relations.Blocks, ", ")))
 	}
 	return strings.Join(lines, "\n")
 }
 
-func ItemShowPrompt(item domain.Item) string {
+func ItemShowPrompt(item domain.Item, relations ItemRelationSummary) string {
 	lines := []string{
 		"ID: " + item.ID,
 		"Kind: " + string(item.Kind),
@@ -103,8 +119,17 @@ func ItemShowPrompt(item domain.Item) string {
 	if item.Jira != nil {
 		lines = append(lines, "Jira: "+item.Jira.Key)
 	}
+	if item.ParentID != "" {
+		lines = append(lines, "Parent: "+item.ParentID)
+	}
 	if len(item.DependsOn) > 0 {
 		lines = append(lines, "Depends On: "+strings.Join(item.DependsOn, ", "))
+	}
+	if len(relations.Children) > 0 {
+		lines = append(lines, "Children: "+strings.Join(relations.Children, ", "))
+	}
+	if len(relations.Blocks) > 0 {
+		lines = append(lines, "Blocks: "+strings.Join(relations.Blocks, ", "))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -228,7 +253,11 @@ func appendCheckpointLines(lines []string, item domain.Item) []string {
 }
 
 func ItemWithHistoryBrief(item domain.Item, events []domain.Event) string {
-	base := ItemShowBrief(item)
+	return ItemWithHistoryBriefAndRelations(item, ItemRelationSummary{}, events)
+}
+
+func ItemWithHistoryBriefAndRelations(item domain.Item, relations ItemRelationSummary, events []domain.Event) string {
+	base := ItemShowBrief(item, relations)
 	if len(events) == 0 {
 		return base + "\nHistory: none"
 	}
@@ -240,7 +269,11 @@ func ItemWithHistoryBrief(item domain.Item, events []domain.Event) string {
 }
 
 func ItemWithHistoryPrompt(item domain.Item, events []domain.Event) string {
-	base := ItemShowPrompt(item)
+	return ItemWithHistoryPromptAndRelations(item, ItemRelationSummary{}, events)
+}
+
+func ItemWithHistoryPromptAndRelations(item domain.Item, relations ItemRelationSummary, events []domain.Event) string {
+	base := ItemShowPrompt(item, relations)
 	if len(events) == 0 {
 		return base + "\nHistory: none"
 	}
@@ -412,6 +445,205 @@ func ItemLinkedPrompt(item domain.Item, dependencyID string) string {
 		"ID: " + item.ID,
 		"Depends On: " + dependencyID,
 	}, "\n")
+}
+
+func ItemParentLinkedBrief(item domain.Item, parentID string) string {
+	return fmt.Sprintf("linked %s parent %s", item.ID, parentID)
+}
+
+func ItemParentLinkedPrompt(item domain.Item, parentID string) string {
+	return strings.Join([]string{
+		"Status: linked parent",
+		"ID: " + item.ID,
+		"Parent: " + parentID,
+	}, "\n")
+}
+
+func ItemUnlinkedBrief(item domain.Item, dependencyID string) string {
+	return fmt.Sprintf("unlinked %s depends_on %s", item.ID, dependencyID)
+}
+
+func ItemParentUnlinkedBrief(item domain.Item) string {
+	return fmt.Sprintf("unlinked %s parent", item.ID)
+}
+
+func ItemUnlinkedPrompt(item domain.Item, relationLabel, targetID string) string {
+	lines := []string{
+		"Status: unlinked",
+		"ID: " + item.ID,
+		"Relation: " + relationLabel,
+	}
+	if targetID != "" {
+		lines = append(lines, "Target: "+targetID)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func ItemRelations(item domain.Item, items []domain.Item) ItemRelationSummary {
+	relations := ItemRelationSummary{
+		Parent: item.ParentID,
+	}
+	for _, other := range items {
+		if other.ParentID == item.ID {
+			relations.Children = append(relations.Children, other.ID)
+		}
+		for _, depID := range other.DependsOn {
+			if depID == item.ID {
+				relations.Blocks = append(relations.Blocks, other.ID)
+				break
+			}
+		}
+	}
+	sort.Strings(relations.Children)
+	sort.Strings(relations.Blocks)
+	return relations
+}
+
+func ItemSearchBrief(result store.SearchItemsResult) string {
+	lines := []string{
+		fmt.Sprintf("Query: %s", fallbackValue(result.Query)),
+		fmt.Sprintf("Matches: %d", len(result.Items)),
+	}
+	if result.Status != "" {
+		lines = append(lines, "Status Filter: "+result.Status)
+	}
+	if result.Kind != "" {
+		lines = append(lines, "Kind Filter: "+result.Kind)
+	}
+	if len(result.Items) == 0 {
+		return strings.Join(lines, "\n")
+	}
+	lines = append(lines, "Items:")
+	for _, item := range result.Items {
+		lines = append(lines, fmt.Sprintf("  %-12s %-12s p%d %-8s %s", item.ID, item.Status, item.Priority, item.Kind, item.Title))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func ItemSearchPrompt(result store.SearchItemsResult) string {
+	lines := []string{
+		"Query: " + fallbackValue(result.Query),
+		fmt.Sprintf("Matches: %d", len(result.Items)),
+	}
+	for _, item := range result.Items {
+		lines = append(lines, fmt.Sprintf("%s %s p%d %s", item.ID, item.Status, item.Priority, item.Title))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func ReportBrief(result store.ReportResult) string {
+	lines := []string{
+		fmt.Sprintf("Total Items: %d", result.Total),
+		"Status Counts:",
+	}
+	for _, entry := range result.StatusCounts {
+		lines = append(lines, fmt.Sprintf("  %-12s %d", entry.Status, entry.Count))
+	}
+	if result.Agent != "" {
+		lines = append(lines, "Agent: "+result.Agent)
+	}
+	lines = appendReportSections(lines, result)
+	return strings.Join(lines, "\n")
+}
+
+func ReportPrompt(result store.ReportResult) string {
+	lines := []string{
+		fmt.Sprintf("Total: %d", result.Total),
+	}
+	if result.Agent != "" {
+		lines = append(lines, "Agent: "+result.Agent)
+	}
+	for _, entry := range result.StatusCounts {
+		lines = append(lines, fmt.Sprintf("Count %s=%d", entry.Status, entry.Count))
+	}
+	lines = appendPromptReportSections(lines, result)
+	return strings.Join(lines, "\n")
+}
+
+func appendReportSections(lines []string, result store.ReportResult) []string {
+	lines = append(lines, formatInboxSection("Owned", result.Owned)...)
+	lines = append(lines, formatReadySection("Ready", result.Ready)...)
+	lines = append(lines, formatInboxSection("Waiting", result.Waiting)...)
+	lines = append(lines, formatRecentSection("Recent", result.Recent)...)
+	return lines
+}
+
+func appendPromptReportSections(lines []string, result store.ReportResult) []string {
+	lines = append(lines, formatPromptInboxSection("Owned", result.Owned)...)
+	lines = append(lines, formatPromptReadySection("Ready", result.Ready)...)
+	lines = append(lines, formatPromptInboxSection("Waiting", result.Waiting)...)
+	lines = append(lines, formatPromptRecentSection("Recent", result.Recent)...)
+	return lines
+}
+
+func formatInboxSection(label string, entries []store.InboxEntry) []string {
+	if len(entries) == 0 {
+		return []string{label + ": none"}
+	}
+	lines := []string{label + ":"}
+	for _, entry := range entries {
+		line := fmt.Sprintf("  %-12s %-12s %s", entry.Item.ID, entry.Item.Status, entry.Item.Title)
+		if len(entry.WaitingOn) > 0 {
+			line += fmt.Sprintf(" (waiting on %s)", strings.Join(entry.WaitingOn, ", "))
+		}
+		lines = append(lines, line)
+	}
+	return lines
+}
+
+func formatReadySection(label string, entries []store.ReadyEntry) []string {
+	if len(entries) == 0 {
+		return []string{label + ": none"}
+	}
+	lines := []string{label + ":"}
+	for _, entry := range entries {
+		lines = append(lines, fmt.Sprintf("  %-12s %-12s %s", entry.Item.ID, entry.Item.Status, entry.Item.Title))
+	}
+	return lines
+}
+
+func formatRecentSection(label string, events []domain.Event) []string {
+	if len(events) == 0 {
+		return []string{label + ": none"}
+	}
+	lines := []string{label + ":"}
+	for _, event := range events {
+		lines = append(lines, fmt.Sprintf("  %s %-12s %-12s %s", event.ItemID, event.Type, event.Actor, event.Summary))
+	}
+	return lines
+}
+
+func formatPromptInboxSection(label string, entries []store.InboxEntry) []string {
+	if len(entries) == 0 {
+		return []string{label + ": none"}
+	}
+	lines := []string{label + ":"}
+	for _, entry := range entries {
+		lines = append(lines, fmt.Sprintf("%s %s %s", entry.Item.ID, entry.Item.Status, entry.Item.Title))
+	}
+	return lines
+}
+
+func formatPromptReadySection(label string, entries []store.ReadyEntry) []string {
+	if len(entries) == 0 {
+		return []string{label + ": none"}
+	}
+	lines := []string{label + ":"}
+	for _, entry := range entries {
+		lines = append(lines, fmt.Sprintf("%s %s %s", entry.Item.ID, entry.Item.Status, entry.Item.Title))
+	}
+	return lines
+}
+
+func formatPromptRecentSection(label string, events []domain.Event) []string {
+	if len(events) == 0 {
+		return []string{label + ": none"}
+	}
+	lines := []string{label + ":"}
+	for _, event := range events {
+		lines = append(lines, fmt.Sprintf("%s %s %s", event.ItemID, event.Type, event.Summary))
+	}
+	return lines
 }
 
 func NextItemBrief(result store.NextItemResult) string {
