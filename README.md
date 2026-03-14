@@ -9,6 +9,17 @@
 - Supports leases, dependencies, queueing, history, and ready-work views
 - Can be used to dogfood the development of the tool itself
 
+## Writing Good Agent Tickets
+
+`aj` works best when tickets and updates are written as handoff-quality context for the next agent, not just as terse status markers.
+
+- Titles should name the concrete problem or outcome.
+- Goals should explain why the work matters, important constraints, and where acceptance evidence will come from.
+- Progress, block, handoff, and done summaries should say what changed, what was learned, and what risk or verification remains.
+- Next actions should be specific enough that another agent can start work without rereading the whole repo.
+
+Use `aj workflows authoring` and `aj examples authoring` for copyable examples.
+
 ## Build
 
 ```bash

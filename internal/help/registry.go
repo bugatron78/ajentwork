@@ -18,7 +18,7 @@ func DefaultRegistry() Registry {
 	root := Doc{
 		Name:    "aj",
 		Summary: "agent work tracker with optional Jira sync",
-		Purpose: "Track agent work locally in a compact, git-friendly format with built-in help, workflows, and optional Jira interoperability.",
+		Purpose: "Track agent work locally in a compact, git-friendly format with built-in help, workflows, and optional Jira interoperability. Write work items and updates so another agent can pick up the task without rediscovering all the context.",
 		Usage:   "aj <command> [options]",
 		Related: []string{"help", "commands", "workflows", "examples", "glossary"},
 	}
@@ -27,7 +27,7 @@ func DefaultRegistry() Registry {
 		{
 			Name:    "new",
 			Summary: "create a local work item",
-			Purpose: "Create a new local aj work item with a compact snapshot and an initial created event.",
+			Purpose: "Create a new local aj work item with a compact snapshot and an initial created event. The title, goal, and next action should give another agent enough context to start confidently.",
 			Usage:   "aj new --kind <kind> --title <title> --goal <goal> --next <action> [--priority 2]",
 			Options: []OptionDoc{
 				{Name: "--kind <kind>", Description: "required item kind: bug, feature, task, spike, or epic"},
@@ -37,11 +37,12 @@ func DefaultRegistry() Registry {
 				{Name: "--priority <0-4>", Description: "priority where 0 is highest and 4 is lowest; default 2"},
 			},
 			Examples: []ExampleDoc{
-				{Label: "Create a bug", Command: "aj new --kind bug --title \"Fix cache invalidation\" --goal \"restore correct invalidation\" --next \"inspect update path\""},
+				{Label: "Create a bug with context", Command: "aj new --kind bug --title \"Fix cache invalidation after deletes\" --goal \"restore correct invalidation for delete paths; reproduce with the regression in cache/service_test.go and preserve update-path behavior\" --next \"trace the delete invalidation branch and capture the failing test\""},
 			},
 			Related:        []string{"ls", "show", "init"},
+			Safety:         []string{"Write goal and next so another agent can understand the problem, the important constraints, and the immediate starting point without reopening the whole repo first."},
 			WorkflowTags:   []string{"core", "create"},
-			SearchKeywords: []string{"create", "item", "ticket"},
+			SearchKeywords: []string{"create", "item", "ticket", "context", "authoring"},
 		},
 		{
 			Name:    "ls",
@@ -78,7 +79,7 @@ func DefaultRegistry() Registry {
 		{
 			Name:    "update",
 			Summary: "record progress on a local work item",
-			Purpose: "Update a local work item summary and optionally change its next action or active status.",
+			Purpose: "Update a local work item summary and optionally change its next action or active status. Good updates explain what changed, what was learned, and what remains uncertain.",
 			Usage:   "aj update <id> --summary <summary> [--next <action>] [--status <status>]",
 			Arguments: []ArgDoc{
 				{Name: "id", Description: "required work item identifier such as W-8F3K2P1Q", Required: true},
@@ -89,16 +90,17 @@ func DefaultRegistry() Registry {
 				{Name: "--status <status>", Description: "optional replacement status: todo, in_progress, blocked, or in_review"},
 			},
 			Examples: []ExampleDoc{
-				{Label: "Move into progress", Command: "aj update W-8F3K2P1Q --summary \"started implementation\" --status in_progress --next \"write tests\""},
+				{Label: "Move into progress with context", Command: "aj update W-8F3K2P1Q --summary \"delete-path regression reproduced; root cause appears to be a skipped invalidation branch after soft-delete\" --status in_progress --next \"patch the delete branch and extend cache/service_test.go coverage\""},
 			},
 			Related:        []string{"show", "done", "ls"},
+			Safety:         []string{"Use summary to explain the meaningful change or learning, not just that work happened. Update next whenever the best follow-up action changed."},
 			WorkflowTags:   []string{"core", "progress"},
-			SearchKeywords: []string{"progress", "status", "summary"},
+			SearchKeywords: []string{"progress", "status", "summary", "context", "authoring"},
 		},
 		{
 			Name:    "block",
 			Summary: "mark a local work item blocked",
-			Purpose: "Move a local work item into blocked status and optionally attach a dependency that explains what must finish first.",
+			Purpose: "Move a local work item into blocked status and optionally attach a dependency that explains what must finish first. Blocking updates should explain why progress stopped and what condition unblocks it.",
 			Usage:   "aj block <id> --summary <summary> [--on <id>] [--next <action>] [--jira-comment|--no-jira-comment]",
 			Arguments: []ArgDoc{
 				{Name: "id", Description: "required work item identifier such as W-8F3K2P1Q", Required: true},
@@ -111,11 +113,12 @@ func DefaultRegistry() Registry {
 				{Name: "--no-jira-comment", Description: "suppress Jira milestone comment even if the repo policy enables it"},
 			},
 			Examples: []ExampleDoc{
-				{Label: "Block on another item", Command: "aj block W-8F3K2P1Q --on W-2M9A1C7L --summary \"waiting on schema decision\""},
+				{Label: "Block on another item with context", Command: "aj block W-8F3K2P1Q --on W-2M9A1C7L --summary \"waiting on schema decision because the cache key format depends on the new tenant column\" --next \"resume once W-2M9A1C7L lands and rerun the regression suite\""},
 			},
 			Related:        []string{"unblock", "link", "show"},
+			Safety:         []string{"Say why the blocker prevents progress and what evidence or dependency resolution will unblock the work."},
 			WorkflowTags:   []string{"coordination", "blocked"},
-			SearchKeywords: []string{"blocked", "wait", "dependency"},
+			SearchKeywords: []string{"blocked", "wait", "dependency", "context", "authoring"},
 		},
 		{
 			Name:    "unblock",
@@ -140,7 +143,7 @@ func DefaultRegistry() Registry {
 		{
 			Name:    "done",
 			Summary: "complete a local work item",
-			Purpose: "Mark a local work item done, record its completion summary, and clear its next action.",
+			Purpose: "Mark a local work item done, record its completion summary, and clear its next action. Completion summaries should say what shipped or was verified so later agents do not need to rediscover the outcome.",
 			Usage:   "aj done <id> --summary <summary> [--jira-comment|--no-jira-comment]",
 			Arguments: []ArgDoc{
 				{Name: "id", Description: "required work item identifier such as W-8F3K2P1Q", Required: true},
@@ -151,11 +154,12 @@ func DefaultRegistry() Registry {
 				{Name: "--no-jira-comment", Description: "suppress Jira milestone comment even if the repo policy enables it"},
 			},
 			Examples: []ExampleDoc{
-				{Label: "Complete an item", Command: "aj done W-8F3K2P1Q --summary \"tests added and command shipped\""},
+				{Label: "Complete an item with context", Command: "aj done W-8F3K2P1Q --summary \"delete-path invalidation fixed, regression coverage added in cache/service_test.go, and manual smoke test passed\""},
 			},
 			Related:        []string{"update", "show", "ls"},
+			Safety:         []string{"Summaries should capture the shipped behavior or verification evidence, not just that the item is finished."},
 			WorkflowTags:   []string{"core", "complete"},
-			SearchKeywords: []string{"complete", "finish", "close"},
+			SearchKeywords: []string{"complete", "finish", "close", "context", "authoring"},
 		},
 		{
 			Name:    "take",
@@ -196,7 +200,7 @@ func DefaultRegistry() Registry {
 		{
 			Name:    "handoff",
 			Summary: "transfer a local work item lease to another agent",
-			Purpose: "Assign a new lease owner with a handoff summary so another agent can continue the work without ambiguity.",
+			Purpose: "Assign a new lease owner with a handoff summary so another agent can continue the work without ambiguity. Handoff summaries should explain what is done, what is risky, and what to check next.",
 			Usage:   "aj handoff <id> --to <agent> --summary <summary> [--next <action>] [--ttl 4h] [--jira-comment|--no-jira-comment]",
 			Arguments: []ArgDoc{
 				{Name: "id", Description: "required work item identifier such as W-8F3K2P1Q", Required: true},
@@ -210,12 +214,12 @@ func DefaultRegistry() Registry {
 				{Name: "--no-jira-comment", Description: "suppress Jira milestone comment even if the repo policy enables it"},
 			},
 			Examples: []ExampleDoc{
-				{Label: "Hand off for review", Command: "aj handoff W-8F3K2P1Q --to reviewer-1 --summary \"implementation ready for review\" --next \"verify CLI behavior\""},
+				{Label: "Hand off for review with context", Command: "aj handoff W-8F3K2P1Q --to reviewer-1 --summary \"delete-path fix is in; main risk is multi-tenant cache key compatibility during upgrade\" --next \"verify the regression tests and spot-check upgrade-path behavior\""},
 			},
 			Related:        []string{"take", "release", "show"},
-			Safety:         []string{"Use handoff when ownership is explicitly changing, rather than force-claiming another agent's active lease."},
+			Safety:         []string{"Use handoff when ownership is explicitly changing, rather than force-claiming another agent's active lease.", "A good handoff should let the receiving agent continue without guessing what was finished, what is risky, or what evidence still needs review."},
 			WorkflowTags:   []string{"coordination", "handoff"},
-			SearchKeywords: []string{"handoff", "transfer", "lease"},
+			SearchKeywords: []string{"handoff", "transfer", "lease", "context", "authoring"},
 		},
 		{
 			Name:    "reopen",
@@ -350,7 +354,7 @@ func DefaultRegistry() Registry {
 				{Label: "Import and claim Jira work", Command: "aj take jira ABC-123 --agent coder-1"},
 			},
 			Related:        []string{"take", "show", "workflows"},
-			Safety:         []string{"Set Jira credentials through environment variables instead of committing secrets into .aj/config.toml.", "Use `aj jira search ...` before creating or linking new work so agents can avoid duplicate issues.", "Use `aj jira status-map` and `aj jira transitions <id>` before the first sync or whenever local and remote workflow behavior is unclear.", "Use `aj jira unlink --force` only when you intentionally want to drop a dirty or conflicted Jira link.", "Sync may attempt a Jira status transition when local status differs and a mapped transition exists."},
+			Safety:         []string{"Set Jira credentials through environment variables instead of committing secrets into .aj/config.toml.", "Use `aj jira search ...` before creating or linking new work so agents can avoid duplicate issues.", "Write Jira-facing descriptions and milestone comments so a different agent can understand why the work exists, what changed, and what still needs verification.", "Use `aj jira status-map` and `aj jira transitions <id>` before the first sync or whenever local and remote workflow behavior is unclear.", "Use `aj jira unlink --force` only when you intentionally want to drop a dirty or conflicted Jira link.", "Sync may attempt a Jira status transition when local status differs and a mapped transition exists."},
 			WorkflowTags:   []string{"jira", "integration"},
 			SearchKeywords: []string{"jira", "search", "find", "import", "export", "sync", "comment", "transition", "status map", "workflow", "unlink", "relink"},
 		},
@@ -473,6 +477,16 @@ func DefaultRegistry() Registry {
 				"5. Use `aj jira status-map` and `aj jira transitions <id>` to inspect the workflow before syncing.",
 				"6. Use `aj update <id> --summary ... --next ...` to record progress, `aj jira comment <id> --summary \"ready for review\"` for milestone updates, or `aj jira sync <id> --dry-run` to preview sync direction and status transitions.",
 				"7. Use `aj jira unlink <id>` before relinking to a different Jira issue, or `aj jira link <id> <key> --replace` when that swap is intentional.",
+			},
+		},
+		"authoring": {
+			Name:  "authoring",
+			Topic: "write tickets and updates with enough context for another agent to continue the work",
+			Steps: []string{
+				"1. Make the title describe the concrete problem or outcome, not just an activity like \"work on sync\".",
+				"2. Use the goal to explain why the work matters, the important constraints, and any acceptance clues or evidence sources.",
+				"3. Use progress, block, handoff, and done summaries to explain what changed, what was learned, and what risk or uncertainty remains.",
+				"4. Make next actions concrete enough that another agent can start from them without rereading the whole codebase.",
 			},
 		},
 		"blocked": {
@@ -630,9 +644,21 @@ func DefaultRegistry() Registry {
 				{Label: "Post a Jira milestone comment", Command: "aj jira comment W-8F3K2P1Q --summary \"ready for review\""},
 			},
 		},
+		"authoring": {
+			Topic: "authoring",
+			Examples: []ExampleDoc{
+				{Label: "Create a context-rich item", Command: "aj new --kind feature --title \"Align Jira status on export\" --goal \"ensure jira push lands exported issues in the correct Jira workflow state and keep existing export-only links repairable\" --next \"patch export to transition after create and add regression coverage\""},
+				{Label: "Write a useful progress update", Command: "aj update W-8F3K2P1Q --summary \"export now records remote versions, but old export-only links still need a repair path\" --next \"treat empty last_remote_version as dirty_local and verify with a live sync\""},
+				{Label: "Write a handoff another agent can use", Command: "aj handoff W-8F3K2P1Q --to reviewer-1 --summary \"status alignment is fixed; main remaining risk is Jira projects that lack the mapped transition names\" --next \"verify the live SD board and inspect transition diagnostics output\""},
+			},
+		},
 	}
 
 	glossary := map[string]GlossaryEntry{
+		"context-rich update": {
+			Term:       "context-rich update",
+			Definition: "A summary, goal, or handoff note that explains the relevant why, what changed, and what comes next so another agent can continue without rediscovering the same context.",
+		},
 		"lease": {
 			Term:       "lease",
 			Definition: "A temporary claim on a work item that shows which agent is actively working it and when that claim expires.",

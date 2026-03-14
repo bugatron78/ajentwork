@@ -1,16 +1,16 @@
-.TH AJ 1 "2026-03-13" "ajentwork" "Agent Work Tracker" "User Commands"
+.TH AJ 1 "2026-03-14" "ajentwork" "Agent Work Tracker" "User Commands"
 .SH NAME
 aj \- agent work tracker with optional Jira sync
 .SH SYNOPSIS
 .B aj
 <command> [options]
 .SH DESCRIPTION
-Track agent work locally in a compact, git\-friendly format with built\-in help, workflows, and optional Jira interoperability.
+Track agent work locally in a compact, git\-friendly format with built\-in help, workflows, and optional Jira interoperability. Write work items and updates so another agent can pick up the task without rediscovering all the context.
 The primary interactive help surfaces remain `aj \-\-help`, `aj help <command>`, `aj workflows`, and `aj examples`. This man page is a generated offline companion.
 .SH COMMANDS
 .SS BLOCK
 .B aj block <id> \-\-summary <summary> [\-\-on <id>] [\-\-next <action>] [\-\-jira\-comment|\-\-no\-jira\-comment]
-Move a local work item into blocked status and optionally attach a dependency that explains what must finish first.
+Move a local work item into blocked status and optionally attach a dependency that explains what must finish first. Blocking updates should explain why progress stopped and what condition unblocks it.
 .RS
 .TP
 .B \-\-summary <summary>
@@ -44,7 +44,7 @@ optional max number of events to return; default 20
 .RE
 .SS DONE
 .B aj done <id> \-\-summary <summary> [\-\-jira\-comment|\-\-no\-jira\-comment]
-Mark a local work item done, record its completion summary, and clear its next action.
+Mark a local work item done, record its completion summary, and clear its next action. Completion summaries should say what shipped or was verified so later agents do not need to rediscover the outcome.
 .RS
 .TP
 .B \-\-summary <summary>
@@ -58,7 +58,7 @@ suppress Jira milestone comment even if the repo policy enables it
 .RE
 .SS HANDOFF
 .B aj handoff <id> \-\-to <agent> \-\-summary <summary> [\-\-next <action>] [\-\-ttl 4h] [\-\-jira\-comment|\-\-no\-jira\-comment]
-Assign a new lease owner with a handoff summary so another agent can continue the work without ambiguity.
+Assign a new lease owner with a handoff summary so another agent can continue the work without ambiguity. Handoff summaries should explain what is done, what is risky, and what to check next.
 .RS
 .TP
 .B \-\-to <agent>
@@ -114,7 +114,7 @@ required dependency item identifier
 List compact local work item summaries sorted by priority and recency.
 .SS NEW
 .B aj new \-\-kind <kind> \-\-title <title> \-\-goal <goal> \-\-next <action> [\-\-priority 2]
-Create a new local aj work item with a compact snapshot and an initial created event.
+Create a new local aj work item with a compact snapshot and an initial created event. The title, goal, and next action should give another agent enough context to start confidently.
 .RS
 .TP
 .B \-\-kind <kind>
@@ -206,7 +206,7 @@ optional replacement status after unblocking; default todo
 .RE
 .SS UPDATE
 .B aj update <id> \-\-summary <summary> [\-\-next <action>] [\-\-status <status>]
-Update a local work item summary and optionally change its next action or active status.
+Update a local work item summary and optionally change its next action or active status. Good updates explain what changed, what was learned, and what remains uncertain.
 .RS
 .TP
 .B \-\-summary <summary>
@@ -272,6 +272,16 @@ email used for Jira Cloud basic auth
 API token used for Jira Cloud basic auth
 .RE
 .SH WORKFLOWS
+.SS AUTHORING
+write tickets and updates with enough context for another agent to continue the work
+.IP \[bu] 2
+1. Make the title describe the concrete problem or outcome, not just an activity like "work on sync".
+.IP \[bu] 2
+2. Use the goal to explain why the work matters, the important constraints, and any acceptance clues or evidence sources.
+.IP \[bu] 2
+3. Use progress, block, handoff, and done summaries to explain what changed, what was learned, and what risk or uncertainty remains.
+.IP \[bu] 2
+4. Make next actions concrete enough that another agent can start from them without rereading the whole codebase.
 .SS BLOCKED
 record and communicate blocked work
 .IP \[bu] 2
@@ -363,6 +373,13 @@ see only work that can actually start right now
 .IP \[bu] 2
 3. Use `aj take <id> \-\-agent coder\-1` to claim a ready item if it is still available.
 .SH EXAMPLES
+.SS AUTHORING
+.IP \[bu] 2
+Create a context\-rich item: aj new \-\-kind feature \-\-title "Align Jira status on export" \-\-goal "ensure jira push lands exported issues in the correct Jira workflow state and keep existing export\-only links repairable" \-\-next "patch export to transition after create and add regression coverage"
+.IP \[bu] 2
+Write a useful progress update: aj update W\-8F3K2P1Q \-\-summary "export now records remote versions, but old export\-only links still need a repair path" \-\-next "treat empty last_remote_version as dirty_local and verify with a live sync"
+.IP \[bu] 2
+Write a handoff another agent can use: aj handoff W\-8F3K2P1Q \-\-to reviewer\-1 \-\-summary "status alignment is fixed; main remaining risk is Jira projects that lack the mapped transition names" \-\-next "verify the live SD board and inspect transition diagnostics output"
 .SS BLOCKED
 .IP \[bu] 2
 Block on a dependency: aj block W\-8F3K2P1Q \-\-on W\-2M9A1C7L \-\-summary "waiting on schema decision"
@@ -468,6 +485,9 @@ A file reference for logs, long notes, or generated output that is too large to 
 .TP
 .B conflict
 A sync state where both the local item and the remote Jira issue changed after the last successful sync and explicit resolution is required.
+.TP
+.B context\-rich update
+A summary, goal, or handoff note that explains the relevant why, what changed, and what comes next so another agent can continue without rediscovering the same context.
 .TP
 .B lease
 A temporary claim on a work item that shows which agent is actively working it and when that claim expires.
